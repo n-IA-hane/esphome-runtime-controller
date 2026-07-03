@@ -1,0 +1,152 @@
+# Runtime controller for full-experience voice + VoIP devices without a status LED.
+#
+# The full_voice_voip profile lives in the runtime_controller component. This
+# package only wires device components and non-LED output adapters.
+
+substitutions:
+  runtime_controller_debug: "false"
+
+runtime_controller:
+  id: runtime
+  debug: ${runtime_controller_debug}
+  profile: full_voice_voip
+  observe:
+    voice_assistant: va
+    micro_wake_word: mww
+    media_player: speaker_media_player
+    voip_stack: phone
+  actions:
+    voice_start:
+      - voice_assistant.start:
+          wake_word: !lambda 'return id(g_last_wake_word);'
+    voice_cancel_response:
+      - script.execute: ui_va_barge_start
+      - media_player.stop:
+          id: speaker_media_player
+          announcement: true
+      - voice_assistant.stop:
+      - wait_until:
+          condition:
+            not:
+              voice_assistant.is_running:
+      - voice_assistant.start:
+          wake_word: !lambda 'return id(g_last_wake_word);'
+    voice_cancel_pipeline:
+      - script.execute: ui_va_barge_start
+      - voice_assistant.stop:
+      - wait_until:
+          condition:
+            not:
+              voice_assistant.is_running:
+      - voice_assistant.start:
+          wake_word: !lambda 'return id(g_last_wake_word);'
+    voice_stop_all:
+      - media_player.stop:
+          id: speaker_media_player
+          announcement: true
+      - voice_assistant.stop:
+    voice_stop_pipeline:
+      - voice_assistant.stop:
+    cancel_response_cleanup: []
+    stop_announcement:
+      - media_player.stop:
+          id: speaker_media_player
+          announcement: true
+  policies:
+    led_status:
+      output: g_applied_led
+      values:
+        idle: 0
+        muted: 1
+        mic_muted: 2
+        speaker_muted: 3
+        wake: 4
+        listening: 5
+        thinking: 6
+        responding: 7
+        voip_ringing: 8
+        voip_calling: 9
+        voip_in_call: 10
+        error: 11
+        media: 12
+        boot: 13
+        no_wifi: 14
+        no_ha: 15
+        no_va: 16
+        timer_ringing: 17
+    display_status:
+      output: ui_state
+      on_change:
+        - script.execute: render_ui_state
+      values:
+        idle: ${ui_state_idle}
+        boot: ${ui_state_init}
+        no_wifi: ${ui_state_no_wifi}
+        no_ha: ${ui_state_no_ha}
+        muted: ${ui_state_mic_muted}
+        wake: ${ui_state_mww_recent}
+        listening: ${ui_state_va_listening}
+        thinking: ${ui_state_va_thinking}
+        responding: ${ui_state_va_replying}
+        voip_ringing: ${ui_state_call_ringing}
+        voip_calling: ${ui_state_ic_calling}
+        voip_in_call: ${ui_state_call_in_call}
+        error: ${ui_state_va_error}
+        media: ${ui_state_media}
+        no_va: ${ui_state_no_va}
+        timer_ringing: ${ui_state_media}
+    va_state:
+      output: g_va_state
+      values:
+        idle: 0
+        listening: 1
+        thinking: 2
+        responding: 3
+    va_response:
+      values:
+        inactive:
+          value: 0
+          then:
+            - script.execute: ui_va_end
+        active: 1
+    audio_policy:
+      output: g_ducking_active
+      values:
+        normal:
+          value: 0
+          then:
+            - mixer_speaker.apply_ducking:
+                id: media_mixer_input
+                decibel_reduction: 0
+                duration: 500ms
+        duck:
+          value: 1
+          then:
+            - mixer_speaker.apply_ducking:
+                id: media_mixer_input
+                decibel_reduction: 20
+                duration: 200ms
+    ringtone:
+      values:
+        play:
+          then:
+            - script.execute: voip_ringing_loop
+        stop:
+          then:
+            - script.execute: voip_stop_ringtone
+    timer_alarm:
+      values:
+        play:
+          then:
+            - media_player.stop:
+                id: speaker_media_player
+                announcement: true
+            - script.execute: timer_alarm_loop
+            - script.execute: timer_alarm_auto_stop
+        stop:
+          then:
+            - script.stop: timer_alarm_auto_stop
+            - script.stop: timer_alarm_loop
+            - media_player.stop:
+                id: speaker_media_player
+                announcement: true
