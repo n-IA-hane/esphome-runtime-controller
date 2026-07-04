@@ -100,7 +100,9 @@ group, and policy values. Active activities are the current facts.
 
 **Event.** A named input delivered by `runtime_controller.event`. It can define
 default `activate`, `deactivate`, `action`, ordered `cases`, and an inline
-`then` automation.
+`then` automation. The inline `then` runs after the matching case/default has
+updated activities and outputs, so it observes the resolved state. Event
+`then` names must not collide with top-level named `actions:`.
 
 **Case.** A guarded branch with `any`, `all`, `none`, and its own effects. Cases
 are evaluated in order; the first match wins. Defaults are the fallback.
@@ -369,7 +371,7 @@ dashboards.
 | `runtime_controller.event` | `event`, `reason`, `dump` | Deliver an event. With `dump: true`, log full state after processing. |
 | `runtime_controller.set_activity` | `activity`, `active` | Set one fact directly. |
 | `runtime_controller.set_activities` | `set:` map | Set several facts atomically. |
-| `runtime_controller.request_action` | `action` | Run a named action. |
+| `runtime_controller.request_action` | `action` | Run a top-level named action. |
 | `runtime_controller.dump` | `reason` | Log active activities and resolved policies. |
 | `runtime_controller.is_active` | `activity` | Condition true when a fact is active. |
 
@@ -387,7 +389,7 @@ through the rule layer, where the interleaving knowledge lives.
 | `activities` | `{}` | Map of name to priority, initial, group and policies. |
 | `groups` | `{}` | Mutually exclusive activity groups. |
 | `derived_activities` | `[]` | Computed facts. |
-| `events` | `{}` | Event rules and cases. |
+| `events` | `{}` | Event rules, cases and optional post-reducer `then`. |
 | `actions` | `{}` | Named automations. |
 | `policies` | `{}` | Output channels, values and triggers. |
 | `auto_events` | `true` | Enable profile event rules. |

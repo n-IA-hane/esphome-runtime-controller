@@ -270,6 +270,18 @@ void RuntimeController::add_action_trigger(const char *name, Trigger<> *trigger)
   this->actions_[this->action_count_++] = NamedAction{name, trigger};
 }
 
+void RuntimeController::add_event_trigger(const char *name, Trigger<> *trigger) {
+  if (name == nullptr || name[0] == '\0' || trigger == nullptr)
+    return;
+  if (this->event_trigger_count_ >= MAX_ACTIONS) {
+    ESP_LOGE(TAG, "Cannot add event trigger '%s': maximum %u triggers reached", name,
+             static_cast<unsigned>(MAX_ACTIONS));
+    this->mark_config_error_();
+    return;
+  }
+  this->event_triggers_[this->event_trigger_count_++] = NamedAction{name, trigger};
+}
+
 void RuntimeController::add_policy_value_trigger(const char *policy, const char *value, Trigger<> *trigger) {
   if (policy == nullptr || policy[0] == '\0' || value == nullptr || trigger == nullptr)
     return;
@@ -354,6 +366,7 @@ void RuntimeController::event(const char *name) {
       this->commit_outputs_(name != nullptr ? name : "event", old_mask, old_policies);
     }
     this->run_named_action_(rule.action);
+    this->run_event_trigger_(name);
     return;
   }
 
@@ -374,7 +387,11 @@ void RuntimeController::event(const char *name) {
   int action_index = this->find_action_(name);
   if (action_index >= 0) {
     this->run_named_action_(this->actions_[action_index].name);
-  } else if (!event_known && !changed) {
+  }
+  const bool has_event_trigger = this->find_event_trigger_(name) >= 0;
+  if (has_event_trigger) {
+    this->run_event_trigger_(name);
+  } else if (action_index < 0 && !event_known && !changed) {
     ESP_LOGW(TAG, "Ignoring unknown event '%s'", name != nullptr ? name : "-");
   }
 }
@@ -797,6 +814,16 @@ int RuntimeController::find_action_(const char *name) const {
   return -1;
 }
 
+int RuntimeController::find_event_trigger_(const char *name) const {
+  if (name == nullptr)
+    return -1;
+  for (size_t i = 0; i < this->event_trigger_count_; i++) {
+    if (str_eq(this->event_triggers_[i].name, name))
+      return static_cast<int>(i);
+  }
+  return -1;
+}
+
 bool RuntimeController::enqueue_event_(const char *name) {
   if (name == nullptr || name[0] == '\0')
     return false;
@@ -900,6 +927,21 @@ void RuntimeController::drain_pending_actions_() {
       this->pending_actions_[i - 1] = this->pending_actions_[i];
     this->pending_actions_[--this->pending_action_count_] = nullptr;
     this->execute_named_action_(name);
+  }
+}
+
+void RuntimeController::run_event_trigger_(const char *name) {
+  const int index = this->find_event_trigger_(name);
+  if (index < 0)
+    return;
+  if (this->debug_)
+    ESP_LOGI(TAG, "EVENT_THEN seq=%" PRIu32 " name=%s", this->sequence_, this->event_triggers_[index].name);
+  const bool was_dispatching = this->dispatching_;
+  this->dispatching_ = true;
+  this->event_triggers_[index].trigger->trigger();
+  this->dispatching_ = was_dispatching;
+  if (!this->dispatching_) {
+    this->drain_pending_events_();
   }
 }
 

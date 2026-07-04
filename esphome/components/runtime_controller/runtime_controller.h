@@ -42,6 +42,7 @@ class RuntimeController : public Component {
   void set_activity_group(const char *activity, const char *group);
   void add_activity_policy(const char *activity, const char *policy, const char *value);
   void add_action_trigger(const char *name, Trigger<> *trigger);
+  void add_event_trigger(const char *name, Trigger<> *trigger);
   void add_event_activity(const char *event, const char *activity, bool active);
   void add_event_rule(const char *event, const char *action);
   void add_event_rule_update(const char *activity, bool active);
@@ -130,6 +131,7 @@ class RuntimeController : public Component {
   void build_voip_activity_name_(const char *state);
   int find_activity_(const char *name) const;
   int find_action_(const char *name) const;
+  int find_event_trigger_(const char *name) const;
   bool rule_matches_(const EventRule &rule) const;
   bool derived_matches_(const DerivedActivity &derived) const;
   bool is_activity_active_(const char *name, uint8_t index) const;
@@ -141,6 +143,7 @@ class RuntimeController : public Component {
   void run_named_action_(const char *name);
   void execute_named_action_(const char *name);
   void drain_pending_actions_();
+  void run_event_trigger_(const char *name);
   void run_policy_actions_(const ResolvedPolicies &old_policies, const ResolvedPolicies &new_policies);
   void apply_led_state_(const char *state);
   int32_t resolve_policy_output_(const char *policy, const char *value) const;
@@ -256,6 +259,7 @@ class RuntimeController : public Component {
 
   std::array<ActivityConfig, MAX_ACTIVITIES> activities_{};
   std::array<NamedAction, MAX_ACTIONS> actions_{};
+  std::array<NamedAction, MAX_ACTIONS> event_triggers_{};
   std::array<EventActivity, MAX_EVENT_UPDATES> event_updates_{};
   std::array<EventRule, 64> event_rules_{};
   std::array<DerivedActivity, 16> derived_activities_{};
@@ -270,6 +274,7 @@ class RuntimeController : public Component {
   StateOutput sequence_output_{};
   size_t activity_count_{0};
   size_t action_count_{0};
+  size_t event_trigger_count_{0};
   size_t event_update_count_{0};
   size_t event_rule_count_{0};
   size_t derived_activity_count_{0};

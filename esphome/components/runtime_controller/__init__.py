@@ -107,12 +107,12 @@ LED_PRESETS = {
         "wake": {"color": "red", "effect": "Spin", "brightness": 0.7},
         "listening": {"color": "red", "effect": "Spin", "brightness": 0.7},
         "thinking": {"color": "yellow", "effect": "Spin", "brightness": 0.7},
-        "responding": {"color": [0.3, 0.3, 0.7], "effect": "None", "brightness": 0.6},
+        "responding": {"color": "blue", "effect": "None", "brightness": 1.0},
         "voip_ringing": {"color": "red", "effect": "Ringing", "brightness": 1.0},
         "voip_calling": {"color": "orange", "effect": "Calling", "brightness": 1.0},
         "voip_in_call": {"color": [0.3, 0.69, 0.31], "effect": "None", "brightness": 1.0},
         "error": {"color": "red", "effect": "None", "brightness": 0.7},
-        "media": {"color": "blue", "effect": "None", "brightness": 1.0},
+        "media": {"color": "green", "effect": "Spin", "brightness": 1.0},
         "boot": {"color": "red", "effect": "None", "brightness": 0.6},
         "no_wifi": {"color": "orange", "effect": "Blink", "brightness": 0.7},
         "no_ha": {"color": "blue", "effect": "Blink", "brightness": 0.6},
@@ -132,7 +132,7 @@ LED_PRESETS = {
         "voip_calling": {"color": "orange", "effect": "Calling", "brightness": 1.0},
         "voip_in_call": {"color": "green", "effect": "None", "brightness": 1.0},
         "error": {"color": "red", "effect": "None", "brightness": 0.7},
-        "media": {"color": "blue", "effect": "None", "brightness": 1.0},
+        "media": {"color": "green", "effect": "None", "brightness": 1.0},
         "boot": {"color": "red", "effect": "None", "brightness": 0.6},
         "no_wifi": {"color": "orange", "effect": "Blink", "brightness": 0.7},
         "no_ha": {"color": "blue", "effect": "Blink", "brightness": 0.6},
@@ -145,9 +145,9 @@ LED_PRESETS["spotpear_rgb"] = {
     **LED_PRESETS["rgb_single"],
     "wake": {"color": "red", "effect": "Slow Pulse", "brightness": 0.7},
     "listening": {"color": "red", "effect": "Slow Pulse", "brightness": 0.7},
-    "thinking": {"color": "yellow", "effect": "Fast Pulse", "brightness": 0.7},
+    "thinking": {"color": "yellow", "effect": "Slow Pulse", "brightness": 0.7},
     "responding": {"color": "blue", "effect": "None", "brightness": 1.0},
-    "media": {"color": "blue", "effect": "None", "brightness": 1.0},
+    "media": {"color": "green", "effect": "None", "brightness": 1.0},
 }
 
 FULL_VOICE_VOIP_GROUPS = {
@@ -455,6 +455,14 @@ async def to_code(config):
     events = dict(FULL_VOICE_VOIP_EVENTS) if profile_full else {}
     events.update(config[CONF_EVENTS])
     voip_states = dict(FULL_VOICE_VOIP_VOIP_STATES) if profile_full else {}
+    event_then_names = {name for name, event_conf in events.items() if CONF_THEN in event_conf}
+    action_names = set(config[CONF_ACTIONS])
+    collisions = sorted(event_then_names & action_names)
+    if collisions:
+        raise cv.Invalid(
+            "runtime_controller event 'then' names must not collide with top-level actions: "
+            + ", ".join(collisions)
+        )
 
     if CONF_OUTPUT_SCRIPT in config:
         output_script = await cg.get_variable(config[CONF_OUTPUT_SCRIPT])
@@ -557,7 +565,7 @@ async def to_code(config):
                 cg.add(var.add_event_rule_update(activity, False))
         if CONF_THEN in event_conf:
             trigger = cg.new_Pvariable(event_conf[automation.CONF_TRIGGER_ID], cg.TemplateArguments())
-            cg.add(var.add_action_trigger(name, trigger))
+            cg.add(var.add_event_trigger(name, trigger))
             await automation.build_automation(trigger, [], event_conf)
 
     for name, action_conf in config[CONF_ACTIONS].items():
