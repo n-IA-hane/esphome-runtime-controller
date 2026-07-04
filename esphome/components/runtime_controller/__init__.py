@@ -126,13 +126,13 @@ LED_PRESETS = {
         "speaker_muted": {"color": "orange", "effect": "None", "brightness": 0.3},
         "wake": {"color": "red", "effect": "None", "brightness": 0.7},
         "listening": {"color": "red", "effect": "None", "brightness": 0.7},
-        "thinking": {"color": "yellow", "effect": "None", "brightness": 1.0},
+        "thinking": {"color": "yellow", "effect": "Fast Pulse", "brightness": 1.0},
         "responding": {"color": [0.3, 0.3, 0.7], "effect": "None", "brightness": 0.6},
         "voip_ringing": {"color": "red", "effect": "Ringing", "brightness": 1.0},
         "voip_calling": {"color": "orange", "effect": "Calling", "brightness": 1.0},
         "voip_in_call": {"color": "green", "effect": "None", "brightness": 1.0},
         "error": {"color": "red", "effect": "None", "brightness": 0.7},
-        "media": {"color": "green", "effect": "None", "brightness": 1.0},
+        "media": {"color": "green", "effect": "Slow Pulse", "brightness": 1.0},
         "boot": {"color": "red", "effect": "None", "brightness": 0.6},
         "no_wifi": {"color": "orange", "effect": "Blink", "brightness": 0.7},
         "no_ha": {"color": "blue", "effect": "Blink", "brightness": 0.6},
@@ -145,9 +145,9 @@ LED_PRESETS["spotpear_rgb"] = {
     **LED_PRESETS["rgb_single"],
     "wake": {"color": "red", "effect": "Slow Pulse", "brightness": 0.7},
     "listening": {"color": "red", "effect": "Slow Pulse", "brightness": 0.7},
-    "thinking": {"color": "yellow", "effect": "Slow Pulse", "brightness": 0.7},
+    "thinking": {"color": "yellow", "effect": "Fast Pulse", "brightness": 0.7},
     "responding": {"color": "blue", "effect": "None", "brightness": 1.0},
-    "media": {"color": "green", "effect": "None", "brightness": 1.0},
+    "media": {"color": "green", "effect": "Slow Pulse", "brightness": 1.0},
 }
 
 FULL_VOICE_VOIP_GROUPS = {
