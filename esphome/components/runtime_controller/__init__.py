@@ -243,6 +243,7 @@ FULL_VOICE_VOIP_EVENTS = {
         {CONF_ALL: ["va_responding", "announcement"], CONF_ACTIVATE: "va_response_drained", CONF_DEACTIVATE: ["media", "announcement", "announcement_play_seen"]},
         {CONF_ALL: ["announcement"], CONF_DEACTIVATE: ["media", "announcement", "announcement_play_seen"]},
     ]},
+    "announcement_idle": {CONF_DEACTIVATE: ["announcement", "announcement_play_seen"]},
     "media_playing": {CONF_ACTIVATE: "media", CONF_CASES: [
         {CONF_ALL: ["va_stopping"], CONF_ACTIVATE: "media", CONF_DEACTIVATE: ["announcement", "announcement_play_seen", "va_stopping"]},
         {CONF_ALL: ["va_barging"], CONF_ACTIVATE: "media", CONF_DEACTIVATE: ["announcement", "announcement_play_seen"]},
