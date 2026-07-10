@@ -4,7 +4,7 @@ Deterministic state arbitration for composite ESPHome devices: one reducer that
 turns overlapping events from Voice Assistant, media, VoIP, timers, mute and
 connectivity into a single coherent set of outputs.
 
-`runtime_controller` is a small, allocation-free reducer component. Feature
+`runtime_controller` is a small fixed-capacity reducer component. Feature
 callbacks stop writing to LEDs, displays and mixers directly; they report facts
 such as "media is playing", "a call is ringing", or "the mic is muted". The
 controller keeps the active facts, resolves them by priority into one snapshot,
@@ -60,8 +60,9 @@ media is still the highest bidder and the device falls back to it.
 - **Declarative event rules with guarded cases.** Events can have default
   activate/deactivate lists plus ordered cases guarded by `any`, `all` and
   `none` conditions over active activities.
-- **Derived activities.** Facts computed from other facts, re-evaluated after
-  every update.
+- **Derived activities.** Facts computed from other facts. The acyclic
+  dependency graph resolves to a fixed point after every update, independent of
+  YAML declaration order; validation rejects cycles.
 - **Groups.** Activities in the same group are mutually exclusive.
 - **A batteries-included profile.** `profile: full_voice_voip` ships the
   complete activity table and event vocabulary for Voice Assistant, Micro Wake
@@ -71,9 +72,11 @@ media is still the highest bidder and the device falls back to it.
 - **Multiple output styles.** Built-in LED renderer, policy value automations,
   integer globals, per-policy `on_change`, optional snapshot script, activity
   mask and sequence globals.
-- **Deterministic memory and re-entrancy safety.** All tables are static: no
-  heap allocation at runtime. Events raised during dispatch are queued and
-  processed afterwards.
+- **Deterministic reducer state and re-entrancy safety.** Runtime tables and
+  queues have fixed capacity; the resolution hot path uses no dynamically
+  growing containers. ESPHome templatable string actions can still create
+  temporary `std::string` values. Work raised during dispatch is queued and
+  drained in bounded batches.
 - **Introspection.** Debug logs, dump action, activity mask and sequence counter
   make state bugs inspectable from one table.
 
@@ -116,7 +119,8 @@ reference actions by name. Actions are the escape hatch into imperative
 ESPHome automations; state stays in activities.
 
 **Derived activity.** A fact computed from other facts via `when:
-{any_active, all_active, none_active}`.
+{any_active, all_active, none_active}`. Derived dependencies may be declared in
+any order: the reducer iterates the validated acyclic graph to a fixed point.
 
 **Group.** Mutual exclusion. Activating one activity deactivates active peers in
 the same group.
@@ -392,7 +396,7 @@ through the rule layer, where the interleaving knowledge lives.
 | `events` | `{}` | Event rules, cases and optional post-reducer `then`. |
 | `actions` | `{}` | Named automations. |
 | `policies` | `{}` | Output channels, values and triggers. |
-| `auto_events` | `true` | Enable profile event rules. |
+| `auto_events` | `true` | Create an implicit same-name activation event for each explicitly declared activity. Set false when every accepted event must be declared under `events:`. |
 | `outputs.led` | none | Built-in LED renderer config. |
 | `output_script` | none | Script executed after each committed change. |
 | `state_outputs.activity_mask` / `state_outputs.sequence` | none | Globals receiving active bitmask and change counter. |
@@ -407,11 +411,22 @@ The component is intentionally a reducer and nothing else:
 - named actions are one-shot side effects;
 - priorities are data, so behavior changes are YAML edits.
 
-Static limits: 32 activities, 8 policy channels, 8 policy entries per activity,
-16 named actions, 64 event-driven activity updates. Exceeding a limit is logged
-as an explicit configuration error. Events raised from within dispatch are
-queued and processed after the current commit. Unknown events and unknown
-activities produce warnings, never silent drops.
+The reducer core uses fixed storage. Current schema/runtime limits are:
+
+- 32 activities and 16 derived-activity definitions;
+- 8 resolved policy channels and 8 policy entries per activity;
+- 64 event rules, 64 direct event-update slots (implicit auto-events currently
+  use at most one per declared activity), 16 named actions and 16 event-level
+  `then` triggers;
+- per rule: 8 entries in each `any`/`all`/`none` list and 16 activity updates;
+- 64 policy value outputs, 32 policy value actions and 32 LED states;
+- 16 queued reentrant events/atomic update batches and 16 queued named actions.
+
+Exceeding a schema limit is an explicit configuration error. Reentrant work is
+queued after the current commit. A drain processes only the batch present when
+it starts; events/actions created by that batch remain for the next main-loop
+turn, bounding self-referential automations without sleeps or busy loops.
+Unknown events and activities produce warnings, never silent drops.
 
 ## 12. Debugging
 
@@ -432,7 +447,8 @@ Extracted from the maintained
 [`n-IA-hane/esphome-intercom`](https://github.com/n-IA-hane/esphome-intercom)
 codebase, where this reducer arbitrates Voice Assistant, Micro Wake Word,
 media, announcements, timers, mute, connectivity and SIP call state on real
-voice/intercom devices. `SOURCE.md` records the source commit of each snapshot.
+voice/intercom devices. `SOURCE.md` records the extraction origin and scope;
+subsequent changes are tracked by this repository's own commit history.
 
 The `packages/runtime_controller/` directory ships ready-to-include YAML
 packages: `full_controller.yaml` and `full_controller_no_led.yaml`.
