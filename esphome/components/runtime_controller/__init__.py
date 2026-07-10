@@ -394,7 +394,216 @@ DERIVED_ACTIVITY_SCHEMA = cv.Schema(
     }
 )
 
-CONFIG_SCHEMA = cv.Schema(
+
+def _merged_runtime_config(config):
+    profile_full = config.get(CONF_PROFILE) == PROFILE_FULL_VOICE_VOIP
+    activities = dict(FULL_VOICE_VOIP_ACTIVITIES) if profile_full else {}
+    activities.update(config[CONF_ACTIVITIES])
+    groups = {
+        key: list(value)
+        for key, value in (FULL_VOICE_VOIP_GROUPS if profile_full else {}).items()
+    }
+    for group, values in config[CONF_GROUPS].items():
+        groups.setdefault(group, []).extend(values)
+    derived = list(FULL_VOICE_VOIP_DERIVED if profile_full else []) + list(
+        config[CONF_DERIVED_ACTIVITIES]
+    )
+    events = dict(FULL_VOICE_VOIP_EVENTS) if profile_full else {}
+    events.update(config[CONF_EVENTS])
+    return profile_full, activities, groups, derived, events
+
+
+def _validate_runtime_controller(config):
+    profile_full, activities, groups, derived, events = _merged_runtime_config(config)
+
+    generated_voip_names: set[str] = set()
+    if profile_full and CONF_VOIP_STACK in config[CONF_OBSERVE]:
+        generated_voip_names.update(f"voip:{state}" for state in FULL_VOICE_VOIP_VOIP_STATES)
+    if CONF_VOIP in config:
+        if profile_full and CONF_VOIP_STACK in config[CONF_OBSERVE]:
+            raise cv.Invalid("runtime_controller cannot configure both profile observe.voip_stack and voip")
+        voip_conf = config[CONF_VOIP]
+        if voip_conf[CONF_STATES] and not voip_conf[CONF_ACTIVITY_PREFIX]:
+            raise cv.Invalid("runtime_controller voip activity_prefix must not be empty")
+        generated_voip_names.update(
+            f"{voip_conf[CONF_ACTIVITY_PREFIX]}{state}" for state in voip_conf[CONF_STATES]
+        )
+    oversized_voip_names = [name for name in generated_voip_names if len(name.encode("utf-8")) > 63]
+    if oversized_voip_names:
+        raise cv.Invalid(
+            "runtime_controller VoIP activity names must fit in 63 UTF-8 bytes: "
+            + ", ".join(sorted(oversized_voip_names))
+        )
+    collisions = generated_voip_names & set(activities)
+    if collisions:
+        raise cv.Invalid("runtime_controller duplicate VoIP activities: " + ", ".join(sorted(collisions)))
+
+    activity_names = set(activities) | generated_voip_names
+    if len(activity_names) > 32:
+        raise cv.Invalid(f"runtime_controller supports at most 32 activities, got {len(activity_names)}")
+    if any(not str(name).strip() for name in activity_names):
+        raise cv.Invalid("runtime_controller activity names must not be empty")
+
+    group_owner: dict[str, str] = {}
+    for group, members in groups.items():
+        if not group.strip():
+            raise cv.Invalid("runtime_controller group names must not be empty")
+        for activity in members:
+            if activity not in activity_names:
+                raise cv.Invalid(f"runtime_controller group '{group}' references unknown activity '{activity}'")
+            previous = group_owner.setdefault(activity, group)
+            if previous != group:
+                raise cv.Invalid(
+                    f"runtime_controller activity '{activity}' belongs to multiple groups: '{previous}', '{group}'"
+                )
+
+    if len(derived) > 16:
+        raise cv.Invalid(f"runtime_controller supports at most 16 derived activities, got {len(derived)}")
+    derived_names = [item[CONF_NAME] for item in derived]
+    if len(set(derived_names)) != len(derived_names):
+        raise cv.Invalid("runtime_controller derived activity targets must be unique")
+    unknown_targets = set(derived_names) - activity_names
+    if unknown_targets:
+        raise cv.Invalid("runtime_controller derived targets are unknown: " + ", ".join(sorted(unknown_targets)))
+    derived_graph: dict[str, set[str]] = {}
+    for item in derived:
+        when = item.get(CONF_WHEN, {})
+        refs = (
+            list(when.get(CONF_ANY_ACTIVE, []))
+            + list(when.get(CONF_ALL_ACTIVE, []))
+            + list(when.get(CONF_NONE_ACTIVE, []))
+        )
+        if any(len(when.get(key, [])) > 8 for key in (CONF_ANY_ACTIVE, CONF_ALL_ACTIVE, CONF_NONE_ACTIVE)):
+            raise cv.Invalid(f"runtime_controller derived activity '{item[CONF_NAME]}' has more than 8 conditions")
+        unknown = set(refs) - activity_names
+        if unknown:
+            raise cv.Invalid(
+                f"runtime_controller derived activity '{item[CONF_NAME]}' references unknown activities: "
+                + ", ".join(sorted(unknown))
+            )
+        derived_graph[item[CONF_NAME]] = set(refs) & set(derived_names)
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visiting:
+            raise cv.Invalid(f"runtime_controller derived activity cycle includes '{name}'")
+        if name in visited:
+            return
+        visiting.add(name)
+        for dependency in derived_graph.get(name, ()):  # pragma: no branch - bounded graph
+            visit(dependency)
+        visiting.remove(name)
+        visited.add(name)
+
+    for name in derived_graph:
+        visit(name)
+
+    action_names = set(config[CONF_ACTIONS])
+    if any(not name.strip() for name in action_names):
+        raise cv.Invalid("runtime_controller action names must not be empty")
+    if any(not name.strip() for name in events):
+        raise cv.Invalid("runtime_controller event names must not be empty")
+    oversized_event_names = [name for name in events if len(name.encode("utf-8")) > 47]
+    if oversized_event_names:
+        raise cv.Invalid(
+            "runtime_controller event names must fit in 47 UTF-8 bytes: "
+            + ", ".join(sorted(oversized_event_names))
+        )
+    event_then_names = {name for name, event_conf in events.items() if CONF_THEN in event_conf}
+    action_collisions = event_then_names & action_names
+    if action_collisions:
+        raise cv.Invalid(
+            "runtime_controller event 'then' names must not collide with top-level actions: "
+            + ", ".join(sorted(action_collisions))
+        )
+    event_rule_count = 0
+    for event_name, event_conf in events.items():
+        rules = list(event_conf.get(CONF_CASES, []))
+        if event_conf.get(CONF_ACTIVATE) or event_conf.get(CONF_DEACTIVATE) or event_conf.get(CONF_ACTION):
+            rules.append(event_conf)
+        event_rule_count += len(rules)
+        for rule in rules:
+            refs = (
+                _as_list(rule.get(CONF_ANY, []))
+                + _as_list(rule.get(CONF_ALL, []))
+                + _as_list(rule.get(CONF_NONE, []))
+                + _as_list(rule.get(CONF_ACTIVATE, []))
+                + _as_list(rule.get(CONF_DEACTIVATE, []))
+            )
+            unknown = set(refs) - activity_names
+            if unknown:
+                raise cv.Invalid(
+                    f"runtime_controller event '{event_name}' references unknown activities: "
+                    + ", ".join(sorted(unknown))
+                )
+            if any(len(_as_list(rule.get(key, []))) > 8 for key in (CONF_ANY, CONF_ALL, CONF_NONE)):
+                raise cv.Invalid(f"runtime_controller event '{event_name}' has more than 8 conditions")
+            if len(_as_list(rule.get(CONF_ACTIVATE, []))) + len(_as_list(rule.get(CONF_DEACTIVATE, []))) > 16:
+                raise cv.Invalid(f"runtime_controller event '{event_name}' has more than 16 updates in one rule")
+            action = rule.get(CONF_ACTION, "")
+            if action and action not in action_names:
+                raise cv.Invalid(f"runtime_controller event '{event_name}' references unknown action '{action}'")
+    if event_rule_count > 64:
+        raise cv.Invalid(f"runtime_controller supports at most 64 event rules, got {event_rule_count}")
+    if len(action_names) > 16:
+        raise cv.Invalid(f"runtime_controller supports at most 16 actions, got {len(action_names)}")
+    event_triggers = sum(CONF_THEN in event_conf for event_conf in events.values())
+    if event_triggers > 16:
+        raise cv.Invalid(f"runtime_controller supports at most 16 event triggers, got {event_triggers}")
+
+    all_activity_configs = list(activities.values())
+    if profile_full and CONF_VOIP_STACK in config[CONF_OBSERVE]:
+        all_activity_configs.extend(FULL_VOICE_VOIP_VOIP_STATES.values())
+    if CONF_VOIP in config:
+        all_activity_configs.extend(config[CONF_VOIP][CONF_STATES].values())
+    policy_names: set[str] = set()
+    for activity in all_activity_configs:
+        policies = activity.get(CONF_POLICIES, {})
+        if len(policies) > 8:
+            raise cv.Invalid("runtime_controller supports at most 8 policies per activity")
+        policy_names.update(policies)
+    if len(policy_names) > 8:
+        raise cv.Invalid(f"runtime_controller supports at most 8 resolved policies, got {len(policy_names)}")
+
+    configured_policies = config[CONF_POLICIES]
+    policy_global_output_count = sum(CONF_OUTPUT in item for item in configured_policies.values())
+    if policy_global_output_count > 8:
+        raise cv.Invalid(
+            "runtime_controller supports at most 8 policy global outputs, "
+            f"got {policy_global_output_count}"
+        )
+    policy_change_trigger_count = sum(CONF_ON_CHANGE in item for item in configured_policies.values())
+    if policy_change_trigger_count > 8:
+        raise cv.Invalid(
+            "runtime_controller supports at most 8 policy change triggers, "
+            f"got {policy_change_trigger_count}"
+        )
+    policy_output_count = 0
+    policy_value_action_count = 0
+    for policy_conf in configured_policies.values():
+        for value_conf in policy_conf[CONF_VALUES].values():
+            if isinstance(value_conf, int):
+                policy_output_count += 1
+                continue
+            if CONF_VALUE in value_conf:
+                policy_output_count += 1
+            if CONF_THEN in value_conf:
+                policy_value_action_count += 1
+    if policy_output_count > 64:
+        raise cv.Invalid(f"runtime_controller supports at most 64 policy value outputs, got {policy_output_count}")
+    if policy_value_action_count > 32:
+        raise cv.Invalid(
+            f"runtime_controller supports at most 32 policy value actions, got {policy_value_action_count}"
+        )
+
+    if CONF_LED in config[CONF_OUTPUTS] and len(_merged_led_states(config[CONF_OUTPUTS][CONF_LED])) > 32:
+        raise cv.Invalid("runtime_controller supports at most 32 LED states")
+    return config
+
+
+CONFIG_SCHEMA = cv.All(cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(RuntimeController),
         cv.Optional(CONF_DEBUG, default=False): cv.boolean,
@@ -433,7 +642,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ACTIONS, default={}): cv.Schema({cv.string_strict: ACTION_TRIGGER_SCHEMA}),
         cv.Optional(CONF_POLICIES, default={}): cv.Schema({cv.string_strict: POLICY_SCHEMA}),
     }
-).extend(cv.COMPONENT_SCHEMA)
+).extend(cv.COMPONENT_SCHEMA), _validate_runtime_controller)
 
 
 async def to_code(config):
@@ -443,26 +652,8 @@ async def to_code(config):
     if config[CONF_DEBUG]:
         cg.add_define("USE_RUNTIME_CONTROLLER_DEBUG")
 
-    profile_full = config.get(CONF_PROFILE) == PROFILE_FULL_VOICE_VOIP
-    activities = dict(FULL_VOICE_VOIP_ACTIVITIES) if profile_full else {}
-    activities.update(config[CONF_ACTIVITIES])
-    groups = {k: list(v) for k, v in (FULL_VOICE_VOIP_GROUPS if profile_full else {}).items()}
-    for group, values in config[CONF_GROUPS].items():
-        groups.setdefault(group, [])
-        groups[group].extend(values)
-    derived_activities = list(FULL_VOICE_VOIP_DERIVED if profile_full else [])
-    derived_activities.extend(config[CONF_DERIVED_ACTIVITIES])
-    events = dict(FULL_VOICE_VOIP_EVENTS) if profile_full else {}
-    events.update(config[CONF_EVENTS])
+    profile_full, activities, groups, derived_activities, events = _merged_runtime_config(config)
     voip_states = dict(FULL_VOICE_VOIP_VOIP_STATES) if profile_full else {}
-    event_then_names = {name for name, event_conf in events.items() if CONF_THEN in event_conf}
-    action_names = set(config[CONF_ACTIONS])
-    collisions = sorted(event_then_names & action_names)
-    if collisions:
-        raise cv.Invalid(
-            "runtime_controller event 'then' names must not collide with top-level actions: "
-            + ", ".join(collisions)
-        )
 
     if CONF_OUTPUT_SCRIPT in config:
         output_script = await cg.get_variable(config[CONF_OUTPUT_SCRIPT])

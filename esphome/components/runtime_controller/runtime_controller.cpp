@@ -1,8 +1,8 @@
 #include "runtime_controller.h"
 
+#include "esphome/components/light/light_state.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
-#include "esphome/components/light/light_state.h"
 
 #include <cstdio>
 #include <cstring>
@@ -26,7 +26,8 @@ static uint8_t activity_index_or_invalid(int index) {
 
 void RuntimeController::setup() {
   if (this->config_error_) {
-    ESP_LOGE(TAG, "Runtime Controller configuration overflow; refusing to run with a truncated reducer table");
+    ESP_LOGE(TAG, "Runtime Controller configuration overflow; refusing to run "
+                  "with a truncated reducer table");
     this->mark_failed();
     return;
   }
@@ -48,6 +49,7 @@ void RuntimeController::setup() {
 
 void RuntimeController::loop() {
   this->drain_pending_actions_();
+  this->drain_pending_events_();
 
   const uint32_t old_mask = this->generic_activity_mask_;
   const ResolvedPolicies old_policies = this->resolved_policies_;
@@ -424,7 +426,7 @@ void RuntimeController::set_activities(const ActivityUpdate *updates, size_t cou
   const ResolvedPolicies old_policies = this->resolved_policies_;
   bool changed = false;
   for (size_t i = 0; i < count; i++)
-    changed |= this->apply_activity_update_(updates[i].name, updates[i].active);
+    changed |= this->apply_activity_update_(updates[i]);
   changed |= this->apply_derived_activities_();
   if (!changed)
     return;
@@ -521,11 +523,20 @@ bool RuntimeController::derived_matches_(const RuntimeController::DerivedActivit
 
 bool RuntimeController::apply_derived_activities_() {
   bool changed = false;
-  for (size_t i = 0; i < this->derived_activity_count_; i++) {
-    const auto &derived = this->derived_activities_[i];
-    changed |= derived.activity_index != INVALID_ACTIVITY
-                   ? this->set_activity_value_by_index_(derived.activity_index, this->derived_matches_(derived))
-                   : this->set_activity_value_(derived.activity, this->derived_matches_(derived));
+  // Derived activities may depend on earlier or later derived entries. Resolve
+  // the acyclic graph to a fixed point so YAML list order cannot change state.
+  // Validation rejects cycles; at most N passes are needed for N nodes.
+  for (size_t pass = 0; pass < this->derived_activity_count_; pass++) {
+    bool pass_changed = false;
+    for (size_t i = 0; i < this->derived_activity_count_; i++) {
+      const auto &derived = this->derived_activities_[i];
+      pass_changed |= derived.activity_index != INVALID_ACTIVITY
+                          ? this->set_activity_value_by_index_(derived.activity_index, this->derived_matches_(derived))
+                          : this->set_activity_value_(derived.activity, this->derived_matches_(derived));
+    }
+    changed |= pass_changed;
+    if (!pass_changed)
+      break;
   }
   return changed;
 }
@@ -679,7 +690,7 @@ void RuntimeController::commit_outputs_(const char *reason, uint32_t old_mask, c
   this->run_policy_actions_(old_policies, this->resolved_policies_);
   this->publish_outputs_();
   this->dispatching_ = was_dispatching;
-  if (!this->dispatching_)
+  if (!this->dispatching_ && !this->draining_pending_events_)
     this->drain_pending_events_();
 }
 
@@ -689,8 +700,12 @@ void RuntimeController::build_voip_activity_name_(const char *state) {
   if (this->voip_activity_prefix_ == nullptr || this->voip_activity_prefix_[0] == '\0' || state == nullptr ||
       state[0] == '\0')
     return;
-  std::snprintf(this->voip_activity_, sizeof(this->voip_activity_), "%s%s", this->voip_activity_prefix_,
-                state);
+  const int written = std::snprintf(this->voip_activity_, sizeof(this->voip_activity_), "%s%s",
+                                    this->voip_activity_prefix_, state);
+  if (written < 0 || static_cast<size_t>(written) >= sizeof(this->voip_activity_)) {
+    ESP_LOGE(TAG, "VoIP activity name is too long; ignoring state '%s'", state);
+    this->voip_activity_[0] = '\0';
+  }
 #else
   (void) state;
 #endif
@@ -719,17 +734,12 @@ bool RuntimeController::sync_voip_activity_() {
 }
 
 void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies, const ResolvedPolicies &new_policies) {
-  for (size_t i = 0; i < new_policies.value_count; i++) {
-    const char *policy = new_policies.values[i].policy;
-    const char *value = new_policies.values[i].value;
-    const char *old_value = find_policy_value(old_policies, policy, nullptr);
-    if (str_eq(old_value, value))
-      continue;
-    if (value != nullptr && str_eq(policy, "led_status"))
+  auto apply_change = [this](const char *policy, const char *value) {
+    if (str_eq(policy, "led_status"))
       this->apply_led_state_(value);
     for (size_t j = 0; j < this->policy_value_action_count_; j++) {
       const auto &action = this->policy_value_actions_[j];
-      if (str_eq(action.policy, policy) && str_eq(action.value, value)) {
+      if (value != nullptr && str_eq(action.policy, policy) && str_eq(action.value, value)) {
         if (this->debug_)
           ESP_LOGI(TAG, "POLICY seq=%" PRIu32 " %s=%s", this->sequence_, policy, value);
         action.trigger->trigger();
@@ -746,18 +756,41 @@ void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies
       const auto &trigger = this->policy_change_triggers_[j];
       if (str_eq(trigger.policy, policy)) {
         if (this->debug_) {
-          ESP_LOGI(TAG, "POLICY_CHANGE seq=%" PRIu32 " %s=%s output=%" PRId32, this->sequence_, policy, value,
-                   output);
+          ESP_LOGI(TAG, "POLICY_CHANGE seq=%" PRIu32 " %s=%s output=%" PRId32, this->sequence_, policy,
+                   value != nullptr ? value : "(unset)", output);
         }
         trigger.trigger->trigger(output);
       }
     }
+  };
+
+  for (size_t i = 0; i < new_policies.value_count; i++) {
+    const char *policy = new_policies.values[i].policy;
+    const char *value = new_policies.values[i].value;
+    const char *old_value = find_policy_value(old_policies, policy, nullptr);
+    if (str_eq(old_value, value))
+      continue;
+    apply_change(policy, value);
+  }
+  // A policy can disappear when its last owning activity deactivates. Reset
+  // bound globals/on_change outputs instead of leaving their previous value
+  // latched indefinitely.
+  for (size_t i = 0; i < old_policies.value_count; i++) {
+    const char *policy = old_policies.values[i].policy;
+    if (find_policy_value(new_policies, policy, nullptr) == nullptr)
+      apply_change(policy, nullptr);
   }
 }
 
 void RuntimeController::apply_led_state_(const char *state) {
-  if (this->led_light_ == nullptr || state == nullptr)
+  if (this->led_light_ == nullptr)
     return;
+  if (state == nullptr) {
+    auto call = this->led_light_->turn_off();
+    call.set_save(false);
+    call.perform();
+    return;
+  }
   const LedState *match = nullptr;
   for (size_t i = 0; i < this->led_state_count_; i++) {
     if (str_eq(this->led_states_[i].state, state)) {
@@ -831,11 +864,17 @@ bool RuntimeController::enqueue_event_(const char *name) {
     ESP_LOGE(TAG, "Cannot queue event '%s': queue full", name);
     return false;
   }
-  auto &event = this->pending_events_[this->pending_event_count_++];
+  auto &event = this->pending_events_[this->pending_event_count_];
   event.name[0] = '\0';
   event.update_count = 0;
   event.kind = PendingEventKind::EVENT;
-  std::snprintf(event.name, sizeof(event.name), "%s", name);
+  const int written = std::snprintf(event.name, sizeof(event.name), "%s", name);
+  if (written < 0 || static_cast<size_t>(written) >= sizeof(event.name)) {
+    ESP_LOGE(TAG, "Cannot queue event: name exceeds %u bytes", static_cast<unsigned>(sizeof(event.name) - 1));
+    event.name[0] = '\0';
+    return false;
+  }
+  this->pending_event_count_++;
   if (this->debug_)
     ESP_LOGI(TAG, "EVENT_QUEUE seq=%" PRIu32 " name=%s", this->sequence_, event.name);
   this->enable_loop_soon_any_context();
@@ -858,9 +897,27 @@ bool RuntimeController::enqueue_activity_updates_(const ActivityUpdate *updates,
   event.name[0] = '\0';
   event.update_count = 0;
   event.kind = PendingEventKind::SET_ACTIVITIES;
-  event.update_count = count > std::size(event.updates) ? std::size(event.updates) : count;
-  for (size_t i = 0; i < event.update_count; i++)
-    event.updates[i] = updates[i];
+  const size_t bounded_count = count > std::size(event.updates) ? std::size(event.updates) : count;
+  if (bounded_count != count) {
+    ESP_LOGW(TAG, "Queued activity update truncated from %u to %u entries", static_cast<unsigned>(count),
+             static_cast<unsigned>(bounded_count));
+  }
+  for (size_t i = 0; i < bounded_count; i++) {
+    int index = updates[i].index != INVALID_ACTIVITY ? static_cast<int>(updates[i].index)
+                                                     : this->find_activity_(updates[i].name);
+    if (index < 0 || static_cast<size_t>(index) >= this->activity_count_) {
+      ESP_LOGW(TAG, "Ignoring unknown queued activity '%s'", updates[i].name != nullptr ? updates[i].name : "-");
+      continue;
+    }
+    // Queue the stable code-generated name and resolved index. Templatable
+    // action strings are local temporaries and must never escape as c_str().
+    event.updates[event.update_count++] = ActivityUpdate{this->activities_[index].name, updates[i].active,
+                                                         static_cast<uint8_t>(index)};
+  }
+  if (event.update_count == 0) {
+    this->pending_event_count_--;
+    return false;
+  }
   if (this->debug_)
     ESP_LOGI(TAG, "SET_QUEUE seq=%" PRIu32 " count=%u", this->sequence_, static_cast<unsigned>(event.update_count));
   this->enable_loop_soon_any_context();
@@ -868,7 +925,14 @@ bool RuntimeController::enqueue_activity_updates_(const ActivityUpdate *updates,
 }
 
 void RuntimeController::drain_pending_events_() {
-  while (!this->dispatching_ && this->pending_event_count_ > 0) {
+  if (this->dispatching_ || this->draining_pending_events_)
+    return;
+  this->draining_pending_events_ = true;
+  // Process only the batch present on entry. Events emitted by that batch stay
+  // queued for the next main-loop turn, preventing recursive or cyclic rules
+  // from monopolising the scheduler.
+  size_t remaining = this->pending_event_count_;
+  while (!this->dispatching_ && this->pending_event_count_ > 0 && remaining-- > 0) {
     PendingEvent event = this->pending_events_[0];
     for (size_t i = 1; i < this->pending_event_count_; i++)
       this->pending_events_[i - 1] = this->pending_events_[i];
@@ -883,15 +947,20 @@ void RuntimeController::drain_pending_events_() {
       this->set_activities(event.updates, event.update_count);
     }
   }
+  this->draining_pending_events_ = false;
 }
 
 void RuntimeController::run_named_action_(const char *name) {
   if (name == nullptr || name[0] == '\0')
     return;
-  if (this->find_action_(name) < 0) {
+  const int action_index = this->find_action_(name);
+  if (action_index < 0) {
     ESP_LOGW(TAG, "Ignoring unknown action '%s'", name);
     return;
   }
+  // Always retain the stable code-generated name. A request_action template
+  // passes a temporary std::string whose c_str() expires after play().
+  name = this->actions_[action_index].name;
   for (size_t i = 0; i < this->pending_action_count_; i++) {
     if (str_eq(this->pending_actions_[i], name)) {
       if (this->debug_)
@@ -921,7 +990,10 @@ void RuntimeController::execute_named_action_(const char *name) {
 }
 
 void RuntimeController::drain_pending_actions_() {
-  while (this->pending_action_count_ > 0) {
+  // Newly queued actions run on the next loop turn. This preserves FIFO order
+  // while ensuring self-referential automations cannot spin forever here.
+  size_t remaining = this->pending_action_count_;
+  while (this->pending_action_count_ > 0 && remaining-- > 0) {
     const char *name = this->pending_actions_[0];
     for (size_t i = 1; i < this->pending_action_count_; i++)
       this->pending_actions_[i - 1] = this->pending_actions_[i];
@@ -940,7 +1012,7 @@ void RuntimeController::run_event_trigger_(const char *name) {
   this->dispatching_ = true;
   this->event_triggers_[index].trigger->trigger();
   this->dispatching_ = was_dispatching;
-  if (!this->dispatching_) {
+  if (!this->dispatching_ && !this->draining_pending_events_) {
     this->drain_pending_events_();
   }
 }

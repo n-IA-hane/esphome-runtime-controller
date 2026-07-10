@@ -286,6 +286,7 @@ class RuntimeController : public Component {
   size_t pending_action_count_{0};
   size_t pending_event_count_{0};
   bool dispatching_{false};
+  bool draining_pending_events_{false};
   uint32_t generic_activity_mask_{0};
 };
 
