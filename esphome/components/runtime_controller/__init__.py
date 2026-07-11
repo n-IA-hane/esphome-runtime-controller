@@ -262,15 +262,16 @@ FULL_VOICE_VOIP_EVENTS = {
         {CONF_ANY: ["va_barging", "va_stopping"]},
     ]},
     "manual_voice_toggle": {CONF_ACTIVATE: "va_start_requested", CONF_ACTION: "voice_start", CONF_CASES: [
+        {CONF_ANY: "va_stopping"},
         {CONF_ALL: ["va_responding", "announcement"], CONF_ACTIVATE: "va_stopping", CONF_DEACTIVATE: ["va_start_requested", "va_starting", "va_barging", "va_listening", "va_thinking", "va_responding", "announcement", "announcement_play_seen"], CONF_ACTION: "voice_stop_all"},
         {CONF_ANY: "va_responding", CONF_ACTIVATE: "va_stopping", CONF_DEACTIVATE: ["va_start_requested", "va_starting", "va_barging", "va_listening", "va_thinking", "va_responding"], CONF_ACTION: "voice_stop_pipeline"},
-        {CONF_ANY: ["va_start_requested", "va_starting", "va_barging", "va_listening", "va_thinking"], CONF_DEACTIVATE: ["va_start_requested", "va_starting", "va_barging", "va_listening", "va_thinking", "va_responding", "announcement", "announcement_play_seen"], CONF_ACTION: "voice_stop_pipeline"},
+        {CONF_ANY: ["va_start_requested", "va_starting", "va_barging", "va_listening", "va_thinking"], CONF_ACTIVATE: "va_stopping", CONF_DEACTIVATE: ["va_start_requested", "va_starting", "va_barging", "va_listening", "va_thinking", "va_responding", "announcement", "announcement_play_seen"], CONF_ACTION: "voice_stop_pipeline"},
     ]},
     "va_start": {CONF_ACTIVATE: "va_starting", CONF_ACTION: "cancel_response_cleanup", CONF_CASES: [
         {CONF_ANY: "va_barging", CONF_ACTIVATE: "va_listening", CONF_DEACTIVATE: "va_barging", CONF_ACTION: "cancel_response_cleanup"},
     ]},
     "va_responding": {CONF_ACTIVATE: "va_responding", CONF_CASES: [{CONF_ANY: ["va_barging", "va_stopping"]}]},
-    "va_end": {CONF_DEACTIVATE: ["va_start_requested", "va_starting", "va_listening", "va_thinking"], CONF_CASES: [
+    "va_end": {CONF_DEACTIVATE: ["va_start_requested", "va_starting", "va_listening", "va_thinking", "va_stopping"], CONF_CASES: [
         {CONF_ANY: "va_barging", CONF_ACTIVATE: "va_start_requested", CONF_DEACTIVATE: ["va_barging", "va_responding", "announcement", "announcement_play_seen", "va_run_ended", "va_response_drained"]},
         {CONF_ALL: ["va_responding", "va_response_drained"], CONF_DEACTIVATE: ["va_responding", "va_run_ended", "va_response_drained", "announcement", "announcement_play_seen"]},
         {CONF_ANY: "va_responding", CONF_ACTIVATE: ["va_responding", "va_run_ended"]},
@@ -279,6 +280,7 @@ FULL_VOICE_VOIP_EVENTS = {
         {CONF_ANY: "va_barging", CONF_ACTIVATE: "va_start_requested", CONF_DEACTIVATE: "va_barging"},
     ]},
     "va_response_done": {CONF_DEACTIVATE: ["va_responding", "announcement", "announcement_play_seen", "va_run_ended", "va_response_drained"]},
+    "va_stop_complete": {CONF_DEACTIVATE: "va_stopping"},
     "va_error": {CONF_DEACTIVATE: ["va_start_requested", "va_starting", "va_listening", "va_thinking", "va_responding", "va_barging", "va_stopping", "va_run_ended", "va_response_drained"]},
 }
 

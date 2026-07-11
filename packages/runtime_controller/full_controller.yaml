@@ -51,8 +51,24 @@ runtime_controller:
           id: speaker_media_player
           announcement: true
       - voice_assistant.stop:
+      - wait_until:
+          condition:
+            not:
+              voice_assistant.is_running:
+          timeout: 3s
+      - runtime_controller.event:
+          id: runtime
+          event: va_stop_complete
     voice_stop_pipeline:
       - voice_assistant.stop:
+      - wait_until:
+          condition:
+            not:
+              voice_assistant.is_running:
+          timeout: 3s
+      - runtime_controller.event:
+          id: runtime
+          event: va_stop_complete
     cancel_response_cleanup: []
     stop_announcement:
       - media_player.stop:

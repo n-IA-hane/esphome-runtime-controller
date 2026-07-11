@@ -164,3 +164,29 @@ def test_no_second_dead_reducer_implementation_is_shipped() -> None:
     assert "GenericActivity" not in header
     assert "reduce_generic_activities" not in state_cpp
     assert runtime_cpp.count("struct PolicyWinner") == 1
+
+
+def test_manual_stop_blocks_restart_until_va_end() -> None:
+    module = _load_component_module()
+    toggle = module.FULL_VOICE_VOIP_EVENTS["manual_voice_toggle"]
+    active_pipeline_case = next(
+        case for case in toggle[module.CONF_CASES]
+        if "va_listening" in case.get(module.CONF_ANY, [])
+    )
+    assert active_pipeline_case[module.CONF_ACTIVATE] == "va_stopping"
+    assert active_pipeline_case[module.CONF_ACTION] == "voice_stop_pipeline"
+
+    va_end = module.FULL_VOICE_VOIP_EVENTS["va_end"]
+    assert "va_stopping" in va_end[module.CONF_DEACTIVATE]
+    assert module.FULL_VOICE_VOIP_EVENTS["va_stop_complete"][module.CONF_DEACTIVATE] == "va_stopping"
+
+    # A second toggle while teardown is pending is deliberately a no-op.
+    stopping_case = next(
+        case for case in toggle[module.CONF_CASES]
+        if "va_stopping" in case.get(module.CONF_ANY, [])
+    )
+    assert module.CONF_ACTION not in stopping_case
+
+    for package_name in ("full_controller.yaml", "full_controller_no_led.yaml"):
+        package = (ROOT / "packages" / "runtime_controller" / package_name).read_text(encoding="utf-8")
+        assert package.count("event: va_stop_complete") == 2
