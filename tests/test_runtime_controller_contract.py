@@ -123,3 +123,44 @@ def test_schema_rejects_names_that_cannot_fit_runtime_buffers() -> None:
     }
     with pytest.raises(module.cv.Invalid, match="63 UTF-8 bytes"):
         module._validate_runtime_controller(config)
+
+
+@pytest.mark.parametrize(
+    ("policies", "message"),
+    [({"": "normal"}, "policy names"), ({"audio": ""}, "policy values")],
+)
+def test_schema_rejects_empty_policy_names_and_values(policies, message) -> None:
+    module = _load_component_module()
+    config = _minimal_config(module)
+    config[module.CONF_ACTIVITIES] = {
+        "idle": {
+            module.CONF_PRIORITY: 0,
+            module.CONF_INITIAL: True,
+            module.CONF_POLICIES: policies,
+        }
+    }
+    with pytest.raises(module.cv.Invalid, match=message):
+        module._validate_runtime_controller(config)
+
+
+@pytest.mark.parametrize(
+    ("policies", "message"),
+    [({"": {"values": {}}}, "configured policy names"),
+     ({"audio": {"values": {"": 0}}}, "configured policy values")],
+)
+def test_schema_rejects_empty_configured_policy_bindings(policies, message) -> None:
+    module = _load_component_module()
+    config = _minimal_config(module)
+    config[module.CONF_POLICIES] = policies
+    with pytest.raises(module.cv.Invalid, match=message):
+        module._validate_runtime_controller(config)
+
+
+def test_no_second_dead_reducer_implementation_is_shipped() -> None:
+    header = (COMPONENT / "runtime_controller_state.h").read_text(encoding="utf-8")
+    state_cpp = (COMPONENT / "runtime_controller_state.cpp").read_text(encoding="utf-8")
+    runtime_cpp = (COMPONENT / "runtime_controller.cpp").read_text(encoding="utf-8")
+
+    assert "GenericActivity" not in header
+    assert "reduce_generic_activities" not in state_cpp
+    assert runtime_cpp.count("struct PolicyWinner") == 1

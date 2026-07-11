@@ -563,11 +563,25 @@ def _validate_runtime_controller(config):
         policies = activity.get(CONF_POLICIES, {})
         if len(policies) > 8:
             raise cv.Invalid("runtime_controller supports at most 8 policies per activity")
+        empty_policy = next((name for name in policies if not name.strip()), None)
+        if empty_policy is not None:
+            raise cv.Invalid("runtime_controller policy names must not be empty")
+        empty_value = next((value for value in policies.values() if not value.strip()), None)
+        if empty_value is not None:
+            raise cv.Invalid("runtime_controller policy values must not be empty")
         policy_names.update(policies)
     if len(policy_names) > 8:
         raise cv.Invalid(f"runtime_controller supports at most 8 resolved policies, got {len(policy_names)}")
 
     configured_policies = config[CONF_POLICIES]
+    if any(not policy.strip() for policy in configured_policies):
+        raise cv.Invalid("runtime_controller configured policy names must not be empty")
+    if any(
+        not value.strip()
+        for policy_conf in configured_policies.values()
+        for value in policy_conf[CONF_VALUES]
+    ):
+        raise cv.Invalid("runtime_controller configured policy values must not be empty")
     policy_global_output_count = sum(CONF_OUTPUT in item for item in configured_policies.values())
     if policy_global_output_count > 8:
         raise cv.Invalid(
