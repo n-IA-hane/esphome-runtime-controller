@@ -90,6 +90,7 @@ runtime_controller:
         no_ha: 15
         no_va: 16
         timer_ringing: 17
+        voip_remote_ringing: 18
     display_status:
       output: ui_state
       on_change:

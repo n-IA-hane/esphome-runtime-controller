@@ -110,6 +110,7 @@ LED_PRESETS = {
         "responding": {"color": "blue", "effect": "None", "brightness": 1.0},
         "voip_ringing": {"color": "red", "effect": "Ringing", "brightness": 1.0},
         "voip_calling": {"color": "orange", "effect": "Calling", "brightness": 1.0},
+        "voip_remote_ringing": {"color": "orange", "effect": "Ringing", "brightness": 1.0},
         "voip_in_call": {"color": [0.3, 0.69, 0.31], "effect": "None", "brightness": 1.0},
         "error": {"color": "red", "effect": "None", "brightness": 0.7},
         "media": {"color": "green", "effect": "Spin", "brightness": 1.0},
@@ -130,6 +131,7 @@ LED_PRESETS = {
         "responding": {"color": [0.3, 0.3, 0.7], "effect": "None", "brightness": 0.6},
         "voip_ringing": {"color": "red", "effect": "Ringing", "brightness": 1.0},
         "voip_calling": {"color": "orange", "effect": "Calling", "brightness": 1.0},
+        "voip_remote_ringing": {"color": "orange", "effect": "Ringing", "brightness": 1.0},
         "voip_in_call": {"color": "green", "effect": "None", "brightness": 1.0},
         "error": {"color": "red", "effect": "None", "brightness": 0.7},
         "media": {"color": "green", "effect": "Slow Pulse", "brightness": 1.0},
@@ -169,6 +171,15 @@ FULL_VOICE_VOIP_VOIP_STATES = {
         CONF_PRIORITY: 974,
         CONF_POLICIES: {
             "led_status": "voip_calling",
+            "display_status": "voip_calling",
+            "audio_policy": "duck",
+            "va_state": "idle",
+        },
+    },
+    "remote_ringing": {
+        CONF_PRIORITY: 974,
+        CONF_POLICIES: {
+            "led_status": "voip_remote_ringing",
             "display_status": "voip_calling",
             "audio_policy": "duck",
             "va_state": "idle",

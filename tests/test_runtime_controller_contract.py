@@ -190,3 +190,18 @@ def test_manual_stop_blocks_restart_until_va_end() -> None:
     for package_name in ("full_controller.yaml", "full_controller_no_led.yaml"):
         package = (ROOT / "packages" / "runtime_controller" / package_name).read_text(encoding="utf-8")
         assert package.count("event: va_stop_complete") == 2
+
+
+def test_remote_ringing_keeps_outgoing_call_outputs_active() -> None:
+    module = _load_component_module()
+    calling = module.FULL_VOICE_VOIP_VOIP_STATES["calling"][module.CONF_POLICIES]
+    remote = module.FULL_VOICE_VOIP_VOIP_STATES["remote_ringing"][module.CONF_POLICIES]
+
+    assert remote["display_status"] == calling["display_status"] == "voip_calling"
+    assert remote["audio_policy"] == calling["audio_policy"] == "duck"
+    assert remote["led_status"] == "voip_remote_ringing"
+
+    for preset in ("ws2812_ring", "rgb_single"):
+        led = module.LED_PRESETS[preset][remote["led_status"]]
+        assert led["color"] == "orange"
+        assert led["effect"] == "Ringing"
