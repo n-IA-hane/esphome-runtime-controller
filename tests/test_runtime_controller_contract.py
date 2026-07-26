@@ -38,8 +38,9 @@ def _minimal_config(module):
 def test_derived_activities_resolve_to_a_fixed_point() -> None:
     cpp = (COMPONENT / "runtime_controller.cpp").read_text(encoding="utf-8")
     body = cpp[
-        cpp.index("bool RuntimeController::apply_derived_activities_()") :
-        cpp.index("\nvoid RuntimeController::publish_outputs_()")
+        cpp.index("bool RuntimeController::apply_derived_activities_()") : cpp.index(
+            "\nvoid RuntimeController::publish_outputs_()"
+        )
     ]
     assert "for (size_t pass = 0; pass < this->derived_activity_count_; pass++)" in body
     assert "if (!pass_changed)" in body
@@ -48,8 +49,9 @@ def test_derived_activities_resolve_to_a_fixed_point() -> None:
 def test_removed_policies_reset_outputs() -> None:
     cpp = (COMPONENT / "runtime_controller.cpp").read_text(encoding="utf-8")
     body = cpp[
-        cpp.index("void RuntimeController::run_policy_actions_(") :
-        cpp.index("\nvoid RuntimeController::apply_led_state_")
+        cpp.index("void RuntimeController::run_policy_actions_(") : cpp.index(
+            "\nvoid RuntimeController::apply_led_state_"
+        )
     ]
     assert "find_policy_value(new_policies, policy, nullptr) == nullptr" in body
     assert "apply_change(policy, nullptr);" in body
@@ -101,12 +103,31 @@ def test_queued_templates_are_canonicalized_and_drained_in_bounded_batches() -> 
     header = (COMPONENT / "runtime_controller.h").read_text(encoding="utf-8")
 
     assert "changed |= this->apply_activity_update_(updates[i]);" in cpp
-    assert "this->activities_[index].name, updates[i].active" in cpp
-    assert "name = this->actions_[action_index].name;" in cpp
+    assert "this->storage_->activities[index].name, updates[i].active" in cpp
+    assert "name = this->storage_->actions[action_index].name;" in cpp
     assert "size_t remaining = this->pending_action_count_;" in cpp
     assert "size_t remaining = this->pending_event_count_;" in cpp
     assert "bool draining_pending_events_{false};" in header
-    assert "this->drain_pending_events_();" in cpp[cpp.index("void RuntimeController::loop()") :]
+    assert (
+        "this->drain_pending_events_();"
+        in cpp[cpp.index("void RuntimeController::loop()") :]
+    )
+
+
+def test_runtime_storage_has_an_explicit_psram_gate() -> None:
+    init = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
+    cpp = (COMPONENT / "runtime_controller.cpp").read_text(encoding="utf-8")
+    header = (COMPONENT / "runtime_controller.h").read_text(encoding="utf-8")
+
+    assert 'CONF_STORAGE_IN_PSRAM = "storage_in_psram"' in init
+    assert "default=False" in init
+    assert 'cv.requires_component("psram")' in init
+    assert "var.set_storage_in_psram(config[CONF_STORAGE_IN_PSRAM])" in init
+    assert "RAMAllocator<Storage>::ALLOC_EXTERNAL" in cpp
+    assert "RAMAllocator<Storage>::ALLOC_INTERNAL" in cpp
+    assert "Storage *storage_{nullptr};" in header
+    assert "std::array<EventRule, 64> event_rules{};" in header
+    assert "std::array<PendingEvent, 16> pending_events{};" in header
 
 
 def test_schema_rejects_names_that_cannot_fit_runtime_buffers() -> None:
@@ -145,8 +166,10 @@ def test_schema_rejects_empty_policy_names_and_values(policies, message) -> None
 
 @pytest.mark.parametrize(
     ("policies", "message"),
-    [({"": {"values": {}}}, "configured policy names"),
-     ({"audio": {"values": {"": 0}}}, "configured policy values")],
+    [
+        ({"": {"values": {}}}, "configured policy names"),
+        ({"audio": {"values": {"": 0}}}, "configured policy values"),
+    ],
 )
 def test_schema_rejects_empty_configured_policy_bindings(policies, message) -> None:
     module = _load_component_module()
@@ -170,7 +193,8 @@ def test_manual_stop_blocks_restart_until_va_end() -> None:
     module = _load_component_module()
     toggle = module.FULL_VOICE_VOIP_EVENTS["manual_voice_toggle"]
     active_pipeline_case = next(
-        case for case in toggle[module.CONF_CASES]
+        case
+        for case in toggle[module.CONF_CASES]
         if "va_listening" in case.get(module.CONF_ANY, [])
     )
     assert active_pipeline_case[module.CONF_ACTIVATE] == "va_stopping"
@@ -178,17 +202,23 @@ def test_manual_stop_blocks_restart_until_va_end() -> None:
 
     va_end = module.FULL_VOICE_VOIP_EVENTS["va_end"]
     assert "va_stopping" in va_end[module.CONF_DEACTIVATE]
-    assert module.FULL_VOICE_VOIP_EVENTS["va_stop_complete"][module.CONF_DEACTIVATE] == "va_stopping"
+    assert (
+        module.FULL_VOICE_VOIP_EVENTS["va_stop_complete"][module.CONF_DEACTIVATE]
+        == "va_stopping"
+    )
 
     # A second toggle while teardown is pending is deliberately a no-op.
     stopping_case = next(
-        case for case in toggle[module.CONF_CASES]
+        case
+        for case in toggle[module.CONF_CASES]
         if "va_stopping" in case.get(module.CONF_ANY, [])
     )
     assert module.CONF_ACTION not in stopping_case
 
     for package_name in ("full_controller.yaml", "full_controller_no_led.yaml"):
-        package = (ROOT / "packages" / "runtime_controller" / package_name).read_text(encoding="utf-8")
+        package = (ROOT / "packages" / "runtime_controller" / package_name).read_text(
+            encoding="utf-8"
+        )
         assert package.count("event: va_stop_complete") == 2
 
 

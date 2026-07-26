@@ -1164,6 +1164,10 @@ dynamically growing containers. ESPHome templatable action parameters can still
 materialize temporary `std::string` values, so “fixed reducer storage” should
 not be interpreted as a whole-firmware guarantee of zero heap activity.
 
+On ESP32 targets with configured PSRAM, `storage_in_psram: true` moves those
+bounded reducer tables and reentrant queues to external RAM. The default is
+`false`; this option does not move task stacks, ISR state, or DMA buffers.
+
 If you hit one of those limits, it is usually a sign that the configuration can
 be simplified by using groups, derived activities, or fewer output policies.
 

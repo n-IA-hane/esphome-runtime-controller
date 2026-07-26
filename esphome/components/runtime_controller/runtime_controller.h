@@ -4,6 +4,7 @@
 
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/script/script.h"
 
 #include <array>
@@ -23,6 +24,8 @@ class RuntimeController : public Component {
  public:
   static constexpr uint8_t INVALID_ACTIVITY = 0xFF;
 
+  ~RuntimeController();
+
   struct ActivityUpdate {
     const char *name{nullptr};
     bool active{false};
@@ -35,6 +38,7 @@ class RuntimeController : public Component {
   float get_setup_priority() const override { return setup_priority::PROCESSOR; }
 
   void set_debug(bool debug) { this->debug_ = debug; }
+  void set_storage_in_psram(bool storage_in_psram);
   void set_output_script(script::Script<> *script) { this->output_script_ = script; }
   void set_voip(voip_stack::VoipStack *voip) { this->voip_ = voip; }
   void set_voip_activity_prefix(const char *prefix) { this->voip_activity_prefix_ = prefix; }
@@ -58,20 +62,7 @@ class RuntimeController : public Component {
   void set_policy_change_trigger(const char *policy, Trigger<int32_t> *trigger);
   void set_led_light(light::LightState *light) { this->led_light_ = light; }
   void add_led_state(const char *state, float red, float green, float blue, float brightness, const char *effect);
-  template<typename C> void add_policy_global_output(const char *policy, C *target) {
-    if (policy == nullptr || policy[0] == '\0' || target == nullptr)
-      return;
-    if (this->policy_global_output_count_ >= this->policy_global_outputs_.size())
-      return;
-    this->policy_global_outputs_[this->policy_global_output_count_++] = PolicyGlobalOutput{
-        policy,
-        target,
-        [](void *ptr, int32_t value) {
-          auto *global = static_cast<C *>(ptr);
-          global->value() = static_cast<typename C::value_type>(value);
-        },
-    };
-  }
+  template<typename C> void add_policy_global_output(const char *policy, C *target);
   template<typename C> void set_activity_mask_output(C *target) {
     if (target == nullptr)
       return;
@@ -257,19 +248,27 @@ class RuntimeController : public Component {
     size_t update_count{0};
   };
 
-  std::array<ActivityConfig, MAX_ACTIVITIES> activities_{};
-  std::array<NamedAction, MAX_ACTIONS> actions_{};
-  std::array<NamedAction, MAX_ACTIONS> event_triggers_{};
-  std::array<EventActivity, MAX_EVENT_UPDATES> event_updates_{};
-  std::array<EventRule, 64> event_rules_{};
-  std::array<DerivedActivity, 16> derived_activities_{};
-  std::array<PolicyValueAction, 32> policy_value_actions_{};
-  std::array<PolicyOutput, 64> policy_outputs_{};
-  std::array<PolicyChangeTrigger, MAX_POLICIES> policy_change_triggers_{};
-  std::array<PolicyGlobalOutput, MAX_POLICIES> policy_global_outputs_{};
-  std::array<LedState, 32> led_states_{};
-  std::array<const char *, 16> pending_actions_{};
-  std::array<PendingEvent, 16> pending_events_{};
+  struct Storage {
+    std::array<ActivityConfig, MAX_ACTIVITIES> activities{};
+    std::array<NamedAction, MAX_ACTIONS> actions{};
+    std::array<NamedAction, MAX_ACTIONS> event_triggers{};
+    std::array<EventActivity, MAX_EVENT_UPDATES> event_updates{};
+    std::array<EventRule, 64> event_rules{};
+    std::array<DerivedActivity, 16> derived_activities{};
+    std::array<PolicyValueAction, 32> policy_value_actions{};
+    std::array<PolicyOutput, 64> policy_outputs{};
+    std::array<PolicyChangeTrigger, MAX_POLICIES> policy_change_triggers{};
+    std::array<PolicyGlobalOutput, MAX_POLICIES> policy_global_outputs{};
+    std::array<LedState, 32> led_states{};
+    std::array<const char *, 16> pending_actions{};
+    std::array<PendingEvent, 16> pending_events{};
+  };
+
+  bool allocate_storage_();
+  void release_storage_();
+
+  Storage *storage_{nullptr};
+  bool storage_in_psram_{false};
   StateOutput activity_mask_output_{};
   StateOutput sequence_output_{};
   size_t activity_count_{0};
@@ -289,6 +288,21 @@ class RuntimeController : public Component {
   bool draining_pending_events_{false};
   uint32_t generic_activity_mask_{0};
 };
+
+template<typename C> void RuntimeController::add_policy_global_output(const char *policy, C *target) {
+  if (policy == nullptr || policy[0] == '\0' || target == nullptr || !this->allocate_storage_())
+    return;
+  if (this->policy_global_output_count_ >= this->storage_->policy_global_outputs.size())
+    return;
+  this->storage_->policy_global_outputs[this->policy_global_output_count_++] = PolicyGlobalOutput{
+      policy,
+      target,
+      [](void *ptr, int32_t value) {
+        auto *global = static_cast<C *>(ptr);
+        global->value() = static_cast<typename C::value_type>(value);
+      },
+  };
+}
 
 template<typename... Ts> class EventAction : public Action<Ts...>, public Parented<RuntimeController> {
  public:

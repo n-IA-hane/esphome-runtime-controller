@@ -387,6 +387,7 @@ through the rule layer, where the interleaving knowledge lives.
 | Option | Default | Meaning |
 |---|---|---|
 | `debug` | `false` | Log every event with sequence and activity mask. |
+| `storage_in_psram` | `false` | Allocate bounded reducer tables and reentrant queues in PSRAM. Requires `psram:` and is intended for memory-constrained ESP32 full-feature builds; ISR, DMA and task stacks are unaffected. |
 | `profile` | none | `full_voice_voip` installs the built-in model. |
 | `observe.voip_stack` | none | `voip_stack` id for automatic bridge in profile mode. |
 | `voip.id` / `voip.activity_prefix` / `voip.states` | none / `voip:` / `{}` | Standalone VoIP bridge. |
