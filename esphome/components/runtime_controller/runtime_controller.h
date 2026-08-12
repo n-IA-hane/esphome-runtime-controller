@@ -123,6 +123,7 @@ class RuntimeController : public Component {
   int find_activity_(const char *name) const;
   int find_action_(const char *name) const;
   int find_event_trigger_(const char *name) const;
+  template<typename Matcher> bool matches_(const Matcher &matcher) const;
   bool rule_matches_(const EventRule &rule) const;
   bool derived_matches_(const DerivedActivity &derived) const;
   bool is_activity_active_(const char *name, uint8_t index) const;

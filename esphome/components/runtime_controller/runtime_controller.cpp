@@ -534,42 +534,31 @@ bool RuntimeController::is_activity_active_(const char *name, uint8_t index) con
   return this->is_activity_active(name);
 }
 
-bool RuntimeController::rule_matches_(const RuntimeController::EventRule &rule) const {
-  if (rule.any_count > 0) {
+template<typename Matcher> bool RuntimeController::matches_(const Matcher &matcher) const {
+  if (matcher.any_count > 0) {
     bool any = false;
-    for (size_t i = 0; i < rule.any_count; i++)
-      any |= this->is_activity_active_(rule.any_active[i], rule.any_active_index[i]);
+    for (size_t i = 0; i < matcher.any_count; i++)
+      any |= this->is_activity_active_(matcher.any_active[i], matcher.any_active_index[i]);
     if (!any)
       return false;
   }
-  for (size_t i = 0; i < rule.all_count; i++) {
-    if (!this->is_activity_active_(rule.all_active[i], rule.all_active_index[i]))
+  for (size_t i = 0; i < matcher.all_count; i++) {
+    if (!this->is_activity_active_(matcher.all_active[i], matcher.all_active_index[i]))
       return false;
   }
-  for (size_t i = 0; i < rule.none_count; i++) {
-    if (this->is_activity_active_(rule.none_active[i], rule.none_active_index[i]))
+  for (size_t i = 0; i < matcher.none_count; i++) {
+    if (this->is_activity_active_(matcher.none_active[i], matcher.none_active_index[i]))
       return false;
   }
   return true;
 }
 
+bool RuntimeController::rule_matches_(const RuntimeController::EventRule &rule) const {
+  return this->matches_(rule);
+}
+
 bool RuntimeController::derived_matches_(const RuntimeController::DerivedActivity &derived) const {
-  if (derived.any_count > 0) {
-    bool any = false;
-    for (size_t i = 0; i < derived.any_count; i++)
-      any |= this->is_activity_active_(derived.any_active[i], derived.any_active_index[i]);
-    if (!any)
-      return false;
-  }
-  for (size_t i = 0; i < derived.all_count; i++) {
-    if (!this->is_activity_active_(derived.all_active[i], derived.all_active_index[i]))
-      return false;
-  }
-  for (size_t i = 0; i < derived.none_count; i++) {
-    if (this->is_activity_active_(derived.none_active[i], derived.none_active_index[i]))
-      return false;
-  }
-  return true;
+  return this->matches_(derived);
 }
 
 bool RuntimeController::apply_derived_activities_() {
