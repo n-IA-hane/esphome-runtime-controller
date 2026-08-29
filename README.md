@@ -129,7 +129,7 @@ the same group.
 
 ```yaml
 external_components:
-  - source: github://n-IA-hane/esphome-runtime-controller@main
+  - source: github://n-IA-hane/esphome-runtime-controller@v2026.9.0
     components: [runtime_controller]
 ```
 
@@ -137,14 +137,14 @@ Ready package with the full voice + VoIP profile:
 
 ```yaml
 packages:
-  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller.yaml@main
+  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller.yaml@v2026.9.0
 ```
 
 No-LED package for devices where custom YAML or LVGL owns LED rendering:
 
 ```yaml
 packages:
-  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@main
+  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@v2026.9.0
 ```
 
 The component has no hardware requirements. The optional VoIP bridge requires
