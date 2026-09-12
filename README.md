@@ -1,5 +1,7 @@
 # ESPHome Runtime Controller
 
+Current stable release: [2026.9.2](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.9.2).
+
 Deterministic state arbitration for composite ESPHome devices: one reducer that
 turns overlapping events from Voice Assistant, media, VoIP, timers, mute and
 connectivity into a single coherent set of outputs.
@@ -129,7 +131,7 @@ the same group.
 
 ```yaml
 external_components:
-  - source: github://n-IA-hane/esphome-runtime-controller@v2026.9.0
+  - source: github://n-IA-hane/esphome-runtime-controller@main
     components: [runtime_controller]
 ```
 
@@ -137,14 +139,14 @@ Ready package with the full voice + VoIP profile:
 
 ```yaml
 packages:
-  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller.yaml@v2026.9.0
+  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller.yaml@main
 ```
 
 No-LED package for devices where custom YAML or LVGL owns LED rendering:
 
 ```yaml
 packages:
-  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@v2026.9.0
+  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller_no_led.yaml@main
 ```
 
 The component has no hardware requirements. The optional VoIP bridge requires
