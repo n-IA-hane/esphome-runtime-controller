@@ -561,6 +561,15 @@ FULL_VOICE_VOIP_EVENTS = {
             {CONF_ANY: ["va_barging", "va_stopping"]},
         ],
     },
+    "voice_stop": {
+        CONF_ACTIVATE: "va_stopping",
+        CONF_DEACTIVATE: [
+            "va_start_requested", "va_starting", "va_barging", "va_listening",
+            "va_thinking", "va_responding", "announcement", "announcement_play_seen",
+            "va_run_ended", "va_response_drained",
+        ],
+        CONF_ACTION: "voice_stop_all",
+    },
     "manual_voice_toggle": {
         CONF_ACTIVATE: "va_start_requested",
         CONF_ACTION: "voice_start",

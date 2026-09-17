@@ -235,3 +235,14 @@ def test_remote_ringing_keeps_outgoing_call_outputs_active() -> None:
         led = module.LED_PRESETS[preset][remote["led_status"]]
         assert led["color"] == "orange"
         assert led["effect"] == "Ringing"
+
+
+def test_explicit_voice_stop_uses_existing_stop_acknowledgement():
+    module = _load_component_module()
+    event = module.FULL_VOICE_VOIP_EVENTS['voice_stop']
+    assert event[module.CONF_ACTIVATE] == 'va_stopping'
+    assert event[module.CONF_ACTION] == 'voice_stop_all'
+    assert {'va_listening', 'va_thinking', 'va_responding', 'va_run_ended',
+            'va_response_drained', 'announcement'} <= set(event[module.CONF_DEACTIVATE])
+    done = module.FULL_VOICE_VOIP_EVENTS['va_stop_complete']
+    assert 'va_stopping' in done[module.CONF_DEACTIVATE]
