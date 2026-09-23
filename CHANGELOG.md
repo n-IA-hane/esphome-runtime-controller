@@ -15,8 +15,6 @@ Custom YAMLs may need changes: see the [migration guide](https://github.com/n-IA
 
 Rebuild and upload your firmware. Installing the Home Assistant integration alone does not update the device.
 
-Thank you to everyone supporting the project through GitHub Sponsors, including the latest donation, and to the contributors sharing fixes and hardware feedback.
-
 ---
 
 ## ESPHome Runtime Controller 2026.9.2
