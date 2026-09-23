@@ -1,0 +1,15 @@
+# Complete preset composed from optional feature adapters.
+packages:
+  runtime_base: !include base.yaml
+  runtime_voice: !include voice.yaml
+  runtime_media: !include media.yaml
+  runtime_ringtone: !include ringtone.yaml
+  runtime_timers: !include timers.yaml
+  runtime_display: !include display.yaml
+  runtime_led_state: !include led_state.yaml
+runtime_controller:
+  observe:
+    voip_stack: phone
+    wifi: true
+    microphone_mute: mute
+    speaker_mute: speaker_mute

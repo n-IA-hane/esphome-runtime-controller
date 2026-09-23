@@ -1,0 +1,120 @@
+# Voice Assistant policy bindings. Requires VA and voice UI hooks.
+runtime_controller:
+  features: [voice_assistant]
+  actions:
+    voice_start:
+      - script.stop: runtime_voice_transition
+      - script.execute: runtime_voice_start
+    voice_cancel_response:
+      - script.execute: ui_va_barge_start
+      - script.execute:
+          id: runtime_voice_transition
+          restart_after_stop: true
+          stop_response: true
+    voice_cancel_pipeline:
+      - script.execute: ui_va_barge_start
+      - script.execute:
+          id: runtime_voice_transition
+          restart_after_stop: true
+          stop_response: false
+    voice_stop_all:
+      - script.execute:
+          id: runtime_voice_transition
+          restart_after_stop: false
+          stop_response: true
+    voice_stop_pipeline:
+      - script.execute:
+          id: runtime_voice_transition
+          restart_after_stop: false
+          stop_response: false
+    cancel_response_cleanup: []
+    stop_announcement:
+      - media_player.stop:
+          id: speaker_media_player
+          announcement: true
+  policies:
+    va_state:
+      output: g_va_state
+      values:
+        idle: 0
+        listening: 1
+        thinking: 2
+        responding: 3
+    va_response:
+      values:
+        inactive:
+          value: 0
+          then:
+            - script.execute: ui_va_end
+        active: 1
+
+script:
+  - id: runtime_voice_start
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: |-
+              // Re-evaluate when a suspended stop actually completes. VA is
+              // intentionally allowed during a call for voice commands/barge-in.
+              return (id(va).get_api_connection() != nullptr) && !id(va).is_running() &&
+                     !id(init_in_progress) && !id(g_ota_in_progress) &&
+                     !id(runtime).is_activity_active("mic_muted") &&
+                     !id(runtime).is_activity_active("va_stopping") &&
+                     (id(runtime).is_activity_active("va_start_requested") ||
+                      id(runtime).is_activity_active("va_barging"));
+          then:
+            - voice_assistant.start:
+                wake_word: !lambda 'return id(g_last_wake_word);'
+          else:
+            - runtime_controller.event:
+                id: runtime
+                event: va_start_rejected
+
+  - id: runtime_voice_transition
+    # One operation owns the wait. A newer stop/cancel replaces its continuation
+    # so an old barge-in can never restart VA after the latest explicit stop.
+    mode: restart
+    parameters:
+      restart_after_stop: bool
+      stop_response: bool
+    then:
+      - if:
+          condition:
+            lambda: 'return stop_response;'
+          then:
+            - media_player.stop:
+                id: speaker_media_player
+                announcement: true
+      - voice_assistant.stop:
+      - wait_until:
+          condition:
+            not:
+              voice_assistant.is_running:
+          timeout: 3s
+      - if:
+          condition:
+            not:
+              voice_assistant.is_running:
+          then:
+            - runtime_controller.event:
+                id: runtime
+                event: va_stop_complete
+            - if:
+                condition:
+                  lambda: 'return restart_after_stop;'
+                then:
+                  - script.execute: runtime_voice_start
+          else:
+            - logger.log:
+                level: ERROR
+                format: "Voice Assistant did not stop within 3 seconds"
+            - runtime_controller.event:
+                id: runtime
+                event: va_stop_timeout
+            - wait_until:
+                not:
+                  voice_assistant.is_running:
+            - runtime_controller.event:
+                id: runtime
+                event: va_stop_complete

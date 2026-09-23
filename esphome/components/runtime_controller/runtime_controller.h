@@ -5,13 +5,15 @@
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
-#include "esphome/components/script/script.h"
 
 #include <array>
 #include <cstdint>
 #include <string>
 
 namespace esphome {
+namespace script {
+template<typename... Ts> class Script;
+}
 namespace light {
 class LightState;
 }
@@ -104,6 +106,24 @@ class RuntimeController : public Component {
   struct EventRule;
   struct DerivedActivity;
 
+  // A transaction includes publication, policy effects and event.then. Reentrant
+  // inputs are queued until all three have observed the same committed state.
+  class Transaction {
+   public:
+    explicit Transaction(RuntimeController &controller) : controller_(controller) {
+      this->controller_.dispatching_ = true;
+    }
+    ~Transaction() {
+      this->controller_.dispatching_ = false;
+      this->controller_.drain_pending_events_();
+    }
+    Transaction(const Transaction &) = delete;
+    Transaction &operator=(const Transaction &) = delete;
+
+   protected:
+    RuntimeController &controller_;
+  };
+
   static constexpr size_t MAX_ACTIVITIES = 32;
   static constexpr size_t MAX_ACTIONS = 16;
   static constexpr size_t MAX_EVENT_UPDATES = 64;
@@ -116,9 +136,10 @@ class RuntimeController : public Component {
   bool apply_activity_update_(const char *name, bool active);
   bool apply_activity_update_(const ActivityUpdate &update);
   bool apply_activity_update_by_index_(int index, bool active);
-  bool set_activity_value_if_known_(const char *name, bool active);
   void commit_outputs_(const char *reason, uint32_t old_mask, const ResolvedPolicies &old_policies);
-  bool sync_voip_activity_();
+  uint8_t capture_voip_activity_();
+  bool sync_voip_activity_(uint8_t index);
+  void process_voip_activity_(uint8_t index);
   void build_voip_activity_name_(const char *state);
   int find_activity_(const char *name) const;
   int find_action_(const char *name) const;
@@ -131,6 +152,7 @@ class RuntimeController : public Component {
   bool enqueue_event_(const char *name);
   bool enqueue_activity_update_(const char *name, bool active);
   bool enqueue_activity_updates_(const ActivityUpdate *updates, size_t count);
+  bool enqueue_voip_activity_(uint8_t index);
   void drain_pending_events_();
   void run_named_action_(const char *name);
   void execute_named_action_(const char *name);
@@ -153,6 +175,7 @@ class RuntimeController : public Component {
   ResolvedPolicies resolved_policies_{};
   char voip_activity_[64]{};
   char last_voip_activity_[64]{};
+  uint8_t last_voip_activity_index_{INVALID_ACTIVITY};
 
   struct ActivityConfig {
     const char *name{nullptr};
@@ -241,12 +264,14 @@ class RuntimeController : public Component {
   enum class PendingEventKind : uint8_t {
     EVENT,
     SET_ACTIVITIES,
+    VOIP_ACTIVITY,
   };
   struct PendingEvent {
     PendingEventKind kind{PendingEventKind::EVENT};
     char name[48]{};
     ActivityUpdate updates[16]{};
     size_t update_count{0};
+    uint8_t voip_activity_index{INVALID_ACTIVITY};
   };
 
   struct Storage {
@@ -293,8 +318,10 @@ class RuntimeController : public Component {
 template<typename C> void RuntimeController::add_policy_global_output(const char *policy, C *target) {
   if (policy == nullptr || policy[0] == '\0' || target == nullptr || !this->allocate_storage_())
     return;
-  if (this->policy_global_output_count_ >= this->storage_->policy_global_outputs.size())
+  if (this->policy_global_output_count_ >= this->storage_->policy_global_outputs.size()) {
+    this->mark_config_error_();
     return;
+  }
   this->storage_->policy_global_outputs[this->policy_global_output_count_++] = PolicyGlobalOutput{
       policy,
       target,

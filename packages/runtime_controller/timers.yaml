@@ -1,0 +1,24 @@
+# Optional timers policy bindings.
+runtime_controller:
+  features: [timers]
+  policies:
+    timer_alarm:
+      values:
+        play:
+          then:
+            - script.execute: timer_alarm_loop
+            - script.execute: timer_alarm_auto_stop
+        stop:
+          then:
+            - script.stop: timer_alarm_auto_stop
+            - script.stop: timer_alarm_loop
+            - if:
+                condition:
+                  lambda: |-
+                    return std::string(id(runtime).get_policy("ringtone")) != "play" &&
+                           !id(runtime).is_activity_active("ringtone_draining") &&
+                           !id(runtime).is_activity_active("va_responding");
+                then:
+                  - media_player.stop:
+                      id: speaker_media_player
+                      announcement: true

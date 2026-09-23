@@ -1,7 +1,14 @@
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import globals as globals_component, light, script
+from esphome.components import (
+    globals as globals_component,
+    light,
+    script,
+    media_player,
+    switch,
+    wifi,
+)
 from esphome.const import CONF_ID, CONF_NAME, CONF_THEN
 
 CODEOWNERS = ["@n-IA-hane"]
@@ -9,6 +16,9 @@ DEPENDENCIES = []
 
 runtime_controller_ns = cg.esphome_ns.namespace("runtime_controller")
 RuntimeController = runtime_controller_ns.class_("RuntimeController", cg.Component)
+RuntimeNetworkObservers = runtime_controller_ns.class_(
+    "RuntimeNetworkObservers", cg.Component
+)
 VoipStack = cg.esphome_ns.namespace("voip_stack").class_("VoipStack", cg.Component)
 EventAction = runtime_controller_ns.class_(
     "EventAction", automation.Action, cg.Parented.template(RuntimeController)
@@ -73,6 +83,10 @@ CONF_NONE = "none"
 CONF_STATES = "states"
 CONF_PROFILE = "profile"
 CONF_OBSERVE = "observe"
+CONF_FEATURES = "features"
+CONF_WIFI = "wifi"
+CONF_MICROPHONE_MUTE = "microphone_mute"
+CONF_SPEAKER_MUTE = "speaker_mute"
 CONF_OUTPUTS = "outputs"
 CONF_LED = "led"
 CONF_VOICE_ASSISTANT = "voice_assistant"
@@ -316,7 +330,6 @@ FULL_VOICE_VOIP_ACTIVITIES = {
             "va_state": "idle",
         },
     },
-    "announcement_play_seen": {CONF_PRIORITY: 0, CONF_POLICIES: {}},
     "timer": {CONF_PRIORITY: 0, CONF_POLICIES: {}},
     "timer_ringing": {
         CONF_PRIORITY: 900,
@@ -400,6 +413,41 @@ FULL_VOICE_VOIP_DERIVED = [
     },
 ]
 
+
+def _media_completion_event(playing):
+    """Leaving an announcement preserves music state and completes the VA join."""
+    event = {
+        (CONF_ACTIVATE if playing else CONF_DEACTIVATE): "media",
+        CONF_CASES: [
+            {CONF_ALL: ["va_stopping"], CONF_DEACTIVATE: ["announcement"]},
+            {CONF_ALL: ["va_barging"], CONF_DEACTIVATE: ["announcement"]},
+            {
+                CONF_ALL: ["va_responding", "announcement", "va_run_ended"],
+                CONF_DEACTIVATE: [
+                    "va_responding",
+                    "announcement",
+                    "va_run_ended",
+                    "va_response_drained",
+                ],
+            },
+            {
+                CONF_ALL: ["va_responding", "announcement"],
+                CONF_ACTIVATE: "va_response_drained",
+                CONF_DEACTIVATE: ["announcement"],
+            },
+            {CONF_ALL: ["announcement"], CONF_DEACTIVATE: ["announcement"]},
+        ],
+    }
+
+    # Cases are alternatives to the default rule, not appended updates.
+    key = CONF_ACTIVATE if playing else CONF_DEACTIVATE
+    for case in event[CONF_CASES]:
+        case[key] = (
+            case.get(key, []) if isinstance(case.get(key, []), list) else [case[key]]
+        ) + ["media"]
+    return event
+
+
 FULL_VOICE_VOIP_EVENTS = {
     "boot_start": {CONF_ACTIVATE: ["boot", "no_wifi", "no_ha"]},
     "boot_ready": {CONF_DEACTIVATE: "boot"},
@@ -408,96 +456,32 @@ FULL_VOICE_VOIP_EVENTS = {
     "ha_connected": {CONF_DEACTIVATE: "no_ha"},
     "ha_disconnected": {CONF_ACTIVATE: "no_ha"},
     "va_client_connected": {CONF_DEACTIVATE: "no_va"},
-    "va_client_disconnected": {CONF_ACTIVATE: "no_va"},
-    "media_paused": {
-        CONF_DEACTIVATE: ["media", "announcement", "announcement_play_seen"]
+    "va_client_disconnected": {
+        CONF_ACTIVATE: "no_va",
+        CONF_DEACTIVATE: [
+            "va_start_requested",
+            "va_starting",
+            "va_listening",
+            "va_thinking",
+            "va_responding",
+            "va_barging",
+            "va_stopping",
+            "va_run_ended",
+            "va_response_drained",
+        ],
     },
     "mic_muted": {CONF_ACTIVATE: "mic_muted"},
     "mic_unmuted": {CONF_DEACTIVATE: "mic_muted"},
     "speaker_muted": {CONF_ACTIVATE: "speaker_muted"},
     "speaker_unmuted": {CONF_DEACTIVATE: "speaker_muted"},
     "timer_started": {CONF_ACTIVATE: "timer"},
-    "timer_stopped": {CONF_DEACTIVATE: ["timer", "timer_ringing"]},
+    "timer_stopped": {CONF_DEACTIVATE: "timer_ringing"},
     "timer_finished": {CONF_ACTIVATE: "timer_ringing"},
-    "media_idle": {
-        CONF_DEACTIVATE: "media",
-        CONF_CASES: [
-            {
-                CONF_ALL: ["va_stopping"],
-                CONF_DEACTIVATE: [
-                    "announcement",
-                    "announcement_play_seen",
-                    "va_stopping",
-                ],
-            },
-            {
-                CONF_ALL: ["va_barging"],
-                CONF_DEACTIVATE: ["announcement", "announcement_play_seen"],
-            },
-            {
-                CONF_ALL: ["va_responding", "announcement", "va_run_ended"],
-                CONF_DEACTIVATE: [
-                    "va_responding",
-                    "announcement",
-                    "announcement_play_seen",
-                    "va_run_ended",
-                    "va_response_drained",
-                ],
-            },
-            {
-                CONF_ALL: ["va_responding", "announcement"],
-                CONF_ACTIVATE: "va_response_drained",
-                CONF_DEACTIVATE: ["announcement", "announcement_play_seen"],
-            },
-            {
-                CONF_ALL: ["announcement"],
-                CONF_DEACTIVATE: ["announcement", "announcement_play_seen"],
-            },
-        ],
-    },
-    "media_playing": {
-        CONF_ACTIVATE: "media",
-        CONF_CASES: [
-            {
-                CONF_ALL: ["va_stopping"],
-                CONF_ACTIVATE: "media",
-                CONF_DEACTIVATE: [
-                    "announcement",
-                    "announcement_play_seen",
-                    "va_stopping",
-                ],
-            },
-            {
-                CONF_ALL: ["va_barging"],
-                CONF_ACTIVATE: "media",
-                CONF_DEACTIVATE: ["announcement", "announcement_play_seen"],
-            },
-            {
-                CONF_ALL: ["va_responding", "announcement", "va_run_ended"],
-                CONF_ACTIVATE: "media",
-                CONF_DEACTIVATE: [
-                    "va_responding",
-                    "announcement",
-                    "announcement_play_seen",
-                    "va_run_ended",
-                    "va_response_drained",
-                ],
-            },
-            {
-                CONF_ALL: ["va_responding", "announcement"],
-                CONF_ACTIVATE: ["media", "va_response_drained"],
-                CONF_DEACTIVATE: ["announcement", "announcement_play_seen"],
-            },
-            {
-                CONF_ALL: ["announcement"],
-                CONF_ACTIVATE: "media",
-                CONF_DEACTIVATE: ["announcement", "announcement_play_seen"],
-            },
-        ],
-    },
+    "media_idle": _media_completion_event(False),
+    "media_paused": _media_completion_event(False),
+    "media_playing": _media_completion_event(True),
     "announcement_started": {
         CONF_ACTIVATE: "announcement",
-        CONF_DEACTIVATE: "announcement_play_seen",
         CONF_CASES: [
             {
                 CONF_ANY: [
@@ -510,7 +494,6 @@ FULL_VOICE_VOIP_EVENTS = {
                 ],
                 CONF_DEACTIVATE: [
                     "announcement",
-                    "announcement_play_seen",
                     "va_stopping",
                 ],
                 CONF_ACTION: "stop_announcement",
@@ -527,7 +510,6 @@ FULL_VOICE_VOIP_EVENTS = {
                 CONF_ACTIVATE: ["va_start_requested", "va_barging"],
                 CONF_DEACTIVATE: [
                     "announcement",
-                    "announcement_play_seen",
                     "va_responding",
                 ],
                 CONF_ACTION: "voice_cancel_response",
@@ -564,9 +546,15 @@ FULL_VOICE_VOIP_EVENTS = {
     "voice_stop": {
         CONF_ACTIVATE: "va_stopping",
         CONF_DEACTIVATE: [
-            "va_start_requested", "va_starting", "va_barging", "va_listening",
-            "va_thinking", "va_responding", "announcement", "announcement_play_seen",
-            "va_run_ended", "va_response_drained",
+            "va_start_requested",
+            "va_starting",
+            "va_barging",
+            "va_listening",
+            "va_thinking",
+            "va_responding",
+            "announcement",
+            "va_run_ended",
+            "va_response_drained",
         ],
         CONF_ACTION: "voice_stop_all",
     },
@@ -586,7 +574,6 @@ FULL_VOICE_VOIP_EVENTS = {
                     "va_thinking",
                     "va_responding",
                     "announcement",
-                    "announcement_play_seen",
                 ],
                 CONF_ACTION: "voice_stop_all",
             },
@@ -620,7 +607,6 @@ FULL_VOICE_VOIP_EVENTS = {
                     "va_thinking",
                     "va_responding",
                     "announcement",
-                    "announcement_play_seen",
                 ],
                 CONF_ACTION: "voice_stop_pipeline",
             },
@@ -648,7 +634,6 @@ FULL_VOICE_VOIP_EVENTS = {
             "va_starting",
             "va_listening",
             "va_thinking",
-            "va_stopping",
         ],
         CONF_CASES: [
             {
@@ -658,7 +643,6 @@ FULL_VOICE_VOIP_EVENTS = {
                     "va_barging",
                     "va_responding",
                     "announcement",
-                    "announcement_play_seen",
                     "va_run_ended",
                     "va_response_drained",
                 ],
@@ -670,7 +654,6 @@ FULL_VOICE_VOIP_EVENTS = {
                     "va_run_ended",
                     "va_response_drained",
                     "announcement",
-                    "announcement_play_seen",
                 ],
             },
             {
@@ -687,7 +670,6 @@ FULL_VOICE_VOIP_EVENTS = {
             "va_thinking",
             "va_responding",
             "announcement",
-            "announcement_play_seen",
             "va_stopping",
             "va_run_ended",
             "va_response_drained",
@@ -704,12 +686,15 @@ FULL_VOICE_VOIP_EVENTS = {
         CONF_DEACTIVATE: [
             "va_responding",
             "announcement",
-            "announcement_play_seen",
             "va_run_ended",
             "va_response_drained",
         ]
     },
     "va_stop_complete": {CONF_DEACTIVATE: "va_stopping"},
+    "va_start_rejected": {
+        CONF_DEACTIVATE: ["va_start_requested", "va_starting", "va_barging"]
+    },
+    "va_stop_timeout": {CONF_DEACTIVATE: ["va_barging", "va_start_requested"]},
     "va_error": {
         CONF_DEACTIVATE: [
             "va_start_requested",
@@ -855,26 +840,95 @@ DERIVED_ACTIVITY_SCHEMA = cv.Schema(
 )
 
 
+PROFILE_FEATURES = ("voice_assistant", "media_player", "timers")
+
+
+def _selected_profile(config):
+    """Select declarative rules only; adapters and hardware remain package-owned."""
+    features = set(config.get(CONF_FEATURES, PROFILE_FEATURES))
+    activities = dict(FULL_VOICE_VOIP_ACTIVITIES)
+    if "voice_assistant" not in features:
+        activities = {
+            k: v
+            for k, v in activities.items()
+            if not k.startswith("va_") and k != "no_va"
+        }
+    if "media_player" not in features:
+        activities = {
+            k: v for k, v in activities.items() if k not in ("media", "announcement")
+        }
+    if "timers" not in features:
+        activities = {
+            k: v for k, v in activities.items() if k not in ("timer", "timer_ringing")
+        }
+    names = set(activities)
+    events = {}
+    for name, event in FULL_VOICE_VOIP_EVENTS.items():
+        if "voice_assistant" not in features and (
+            name.startswith("va_")
+            or name in ("wake_word", "manual_voice_toggle", "voice_stop", "voice_quiet")
+        ):
+            continue
+        if "media_player" not in features and (
+            name.startswith("media_") or name == "announcement_started"
+        ):
+            continue
+        if "timers" not in features and name.startswith("timer_"):
+            continue
+
+        def select_rule(rule):
+            if set(_as_list(rule.get(CONF_ALL, []))) - names:
+                return None
+            selected = dict(rule)
+            for key in (CONF_ANY, CONF_ALL, CONF_NONE, CONF_ACTIVATE, CONF_DEACTIVATE):
+                if key in selected:
+                    selected[key] = [x for x in _as_list(selected[key]) if x in names]
+            if CONF_ANY in rule and not selected[CONF_ANY]:
+                return None
+            return selected
+
+        selected = select_rule(event)
+        if selected is not None:
+            if CONF_CASES in event:
+                selected[CONF_CASES] = [
+                    r
+                    for case in event[CONF_CASES]
+                    if (r := select_rule(case)) is not None
+                ]
+            events[name] = selected
+    groups = {
+        k: [x for x in v if x in names] for k, v in FULL_VOICE_VOIP_GROUPS.items()
+    }
+    return activities, groups, list(FULL_VOICE_VOIP_DERIVED), events
+
+
 def _merged_runtime_config(config):
     profile_full = config.get(CONF_PROFILE) == PROFILE_FULL_VOICE_VOIP
-    activities = dict(FULL_VOICE_VOIP_ACTIVITIES) if profile_full else {}
+    base_activities, base_groups, base_derived, base_events = (
+        _selected_profile(config) if profile_full else ({}, {}, [], {})
+    )
+    activities = dict(base_activities)
     activities.update(config[CONF_ACTIVITIES])
-    groups = {
-        key: list(value)
-        for key, value in (FULL_VOICE_VOIP_GROUPS if profile_full else {}).items()
-    }
+    groups = {key: list(value) for key, value in base_groups.items()}
     for group, values in config[CONF_GROUPS].items():
         groups.setdefault(group, []).extend(values)
-    derived = list(FULL_VOICE_VOIP_DERIVED if profile_full else []) + list(
-        config[CONF_DERIVED_ACTIVITIES]
-    )
-    events = dict(FULL_VOICE_VOIP_EVENTS) if profile_full else {}
+    derived = list(base_derived) + list(config[CONF_DERIVED_ACTIVITIES])
+    events = dict(base_events)
     events.update(config[CONF_EVENTS])
     return profile_full, activities, groups, derived, events
 
 
 def _validate_runtime_controller(config):
     profile_full, activities, groups, derived, events = _merged_runtime_config(config)
+
+    if not profile_full and CONF_FEATURES in config:
+        raise cv.Invalid(
+            "runtime_controller features requires profile: full_voice_voip"
+        )
+    if not profile_full and CONF_VOIP_STACK in config[CONF_OBSERVE]:
+        raise cv.Invalid(
+            "observe.voip_stack requires profile: full_voice_voip; use the voip block for custom state mappings"
+        )
 
     generated_voip_names: set[str] = set()
     if profile_full and CONF_VOIP_STACK in config[CONF_OBSERVE]:
@@ -933,6 +987,16 @@ def _validate_runtime_controller(config):
                     f"runtime_controller activity '{activity}' belongs to multiple groups: '{previous}', '{group}'"
                 )
 
+    for group, members in groups.items():
+        initial = [
+            name
+            for name in set(members)
+            if activities.get(name, {}).get(CONF_INITIAL, False)
+        ]
+        if len(initial) > 1:
+            raise cv.Invalid(
+                f"runtime_controller group '{group}' has multiple initially active members"
+            )
     if len(derived) > 16:
         raise cv.Invalid(
             f"runtime_controller supports at most 16 derived activities, got {len(derived)}"
@@ -940,6 +1004,12 @@ def _validate_runtime_controller(config):
     derived_names = [item[CONF_NAME] for item in derived]
     if len(set(derived_names)) != len(derived_names):
         raise cv.Invalid("runtime_controller derived activity targets must be unique")
+    grouped_derived = set(derived_names) & set(group_owner)
+    if grouped_derived:
+        raise cv.Invalid(
+            "runtime_controller derived activities cannot belong to exclusive groups: "
+            + ", ".join(sorted(grouped_derived))
+        )
     unknown_targets = set(derived_names) - activity_names
     if unknown_targets:
         raise cv.Invalid(
@@ -1153,16 +1223,21 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(RuntimeController),
+            cv.GenerateID("observers_id"): cv.declare_id(RuntimeNetworkObservers),
             cv.Optional(CONF_DEBUG, default=False): cv.boolean,
             cv.Optional(
                 CONF_STORAGE_IN_PSRAM, default=False
             ): _validate_storage_in_psram,
             cv.Optional(CONF_PROFILE): cv.one_of(PROFILE_FULL_VOICE_VOIP, lower=True),
+            cv.Optional(CONF_FEATURES): cv.ensure_list(cv.one_of(*PROFILE_FEATURES)),
             cv.Optional(CONF_OBSERVE, default={}): cv.Schema(
                 {
                     cv.Optional(CONF_VOIP_STACK): cv.use_id(VoipStack),
-                },
-                extra=cv.ALLOW_EXTRA,
+                    cv.Optional(CONF_MEDIA_PLAYER): cv.use_id(media_player.MediaPlayer),
+                    cv.Optional(CONF_WIFI, default=False): cv.boolean,
+                    cv.Optional(CONF_MICROPHONE_MUTE): cv.use_id(switch.Switch),
+                    cv.Optional(CONF_SPEAKER_MUTE): cv.use_id(switch.Switch),
+                }
             ),
             cv.Optional(CONF_OUTPUTS, default={}): cv.Schema(
                 {
@@ -1227,6 +1302,7 @@ async def to_code(config):
     voip_states = dict(FULL_VOICE_VOIP_VOIP_STATES) if profile_full else {}
 
     if CONF_OUTPUT_SCRIPT in config:
+        cg.add_define("USE_RUNTIME_CONTROLLER_OUTPUT_SCRIPT")
         output_script = await cg.get_variable(config[CONF_OUTPUT_SCRIPT])
         cg.add(var.set_output_script(output_script))
 
@@ -1246,6 +1322,7 @@ async def to_code(config):
 
     outputs = config[CONF_OUTPUTS]
     if CONF_LED in outputs:
+        cg.add_define("USE_RUNTIME_CONTROLLER_LED")
         led_conf = outputs[CONF_LED]
         led = await cg.get_variable(led_conf[CONF_ID])
         cg.add(var.set_led_light(led))
@@ -1269,6 +1346,31 @@ async def to_code(config):
             )
             for policy, value in activity[CONF_POLICIES].items():
                 cg.add(var.add_activity_policy(name, policy, value))
+
+    observed = config[CONF_OBSERVE]
+    if observed.get(CONF_WIFI) or any(
+        key in observed
+        for key in (CONF_MICROPHONE_MUTE, CONF_SPEAKER_MUTE, CONF_MEDIA_PLAYER)
+    ):
+        observer = cg.new_Pvariable(config["observers_id"])
+        await cg.register_component(observer, config)
+        cg.add(observer.set_runtime(var))
+        if observed.get(CONF_WIFI):
+            wifi.request_wifi_connect_state_listener()
+            cg.add_define("USE_RUNTIME_CONTROLLER_WIFI")
+            cg.add(observer.set_wifi(wifi.wifi_ns.global_wifi_component))
+        for key, setter in (
+            (CONF_MICROPHONE_MUTE, "set_microphone_mute"),
+            (CONF_SPEAKER_MUTE, "set_speaker_mute"),
+            (CONF_MEDIA_PLAYER, "set_media_player"),
+        ):
+            if key in observed:
+                cg.add_define(
+                    "USE_RUNTIME_CONTROLLER_MEDIA_PLAYER"
+                    if key == CONF_MEDIA_PLAYER
+                    else "USE_RUNTIME_CONTROLLER_SWITCH"
+                )
+                cg.add(getattr(observer, setter)(await cg.get_variable(observed[key])))
 
     if CONF_VOIP in config:
         voip_conf = config[CONF_VOIP]
@@ -1337,10 +1439,11 @@ async def to_code(config):
                 cg.add(var.add_event_rule_update(activity, False))
         if CONF_THEN in event_conf:
             trigger = cg.new_Pvariable(
-                event_conf[automation.CONF_TRIGGER_ID], cg.TemplateArguments()
+                event_conf[CONF_THEN][automation.CONF_TRIGGER_ID],
+                cg.TemplateArguments(),
             )
             cg.add(var.add_event_trigger(name, trigger))
-            await automation.build_automation(trigger, [], event_conf)
+            await automation.build_automation(trigger, [], event_conf[CONF_THEN])
 
     for name, action_conf in config[CONF_ACTIONS].items():
         trigger = cg.new_Pvariable(

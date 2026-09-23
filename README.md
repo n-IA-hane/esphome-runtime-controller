@@ -1,5 +1,7 @@
 # ESPHome Runtime Controller
 
+Development preview: [2026.10.0-dev](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.0-dev).
+
 Current stable release: [2026.9.2](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.9.2).
 
 Deterministic state arbitration for composite ESPHome devices: one reducer that
@@ -29,6 +31,14 @@ resolved snapshot
   audio_policy: duck
   ringtone: stop
 ```
+
+## Modular packages and current observation contract
+
+See [Migration](MIGRATION.md) for the modular packages, native listeners and
+shared official VA/MWW callbacks. No new upstream component fork is required.
+The full presets compose the same optional feature adapters; they are not
+separate controllers. Intercom's [package guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/README.md)
+explains the audio, voice, call and presentation modules.
 
 ## 1. What This Is
 
@@ -215,9 +225,11 @@ runtime_controller:
     voip_stack: phone
 ```
 
-The profile installs a complete arbitration model. You keep emitting the
-standard event vocabulary from callbacks; anything you declare in `activities:`,
-`events:` or `policies:` merges over the profile.
+This binding supplements a full package preset, which supplies the required
+executors. The profile's rule sets can be selected through `features`; the full
+preset selects voice, media and timers. Public media/Wi-Fi/mute listeners emit
+their facts directly. Shared packages forward the official VA/MWW callbacks.
+Anything declared in `activities:`, `events:` or `policies:` merges over the profile.
 
 ### 7.1 Activity Table
 
@@ -391,6 +403,10 @@ through the rule layer, where the interleaving knowledge lives.
 | `debug` | `false` | Log every event with sequence and activity mask. |
 | `storage_in_psram` | `false` | Allocate bounded reducer tables and reentrant queues in PSRAM. Requires `psram:` and is intended for memory-constrained ESP32 full-feature builds; ISR, DMA and task stacks are unaffected. |
 | `profile` | none | `full_voice_voip` installs the built-in model. |
+| `features` | complete set when omitted | Select built-in `voice_assistant`, `media_player` and `timers` rules. The modular base starts with `[]`; feature adapters contribute their selection. |
+| `observe.media_player` | none | Media player ID; replay and observe playback state without replacing user callbacks. |
+| `observe.wifi` | `false` | Observe station connection through the public Wi-Fi listener. |
+| `observe.microphone_mute` / `observe.speaker_mute` | none | Switch IDs whose on state means muted. These observe state; hardware actions stay on the switches. |
 | `observe.voip_stack` | none | `voip_stack` id for automatic bridge in profile mode. |
 | `voip.id` / `voip.activity_prefix` / `voip.states` | none / `voip:` / `{}` | Standalone VoIP bridge. |
 | `activities` | `{}` | Map of name to priority, initial, group and policies. |
@@ -457,3 +473,8 @@ The `packages/runtime_controller/` directory ships ready-to-include YAML
 packages: `full_controller.yaml` and `full_controller_no_led.yaml`.
 
 MIT license.
+
+## Support the project
+
+If this component helps your project, [consider sponsoring development](https://github.com/sponsors/n-IA-hane).
+Contributions support development tools, services and test hardware.

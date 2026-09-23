@@ -1,6 +1,11 @@
 #include "runtime_controller.h"
 
+#ifdef USE_RUNTIME_CONTROLLER_LED
 #include "esphome/components/light/light_state.h"
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_OUTPUT_SCRIPT
+#include "esphome/components/script/script.h"
+#endif
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
@@ -28,6 +33,8 @@ static uint8_t activity_index_or_invalid(int index) {
 RuntimeController::~RuntimeController() { this->release_storage_(); }
 
 void RuntimeController::set_storage_in_psram(bool storage_in_psram) {
+  if (this->config_error_)
+    return;
   if (this->storage_ != nullptr && storage_in_psram != this->storage_in_psram_) {
     const bool storage_is_empty =
         this->activity_count_ == 0 && this->action_count_ == 0 && this->event_trigger_count_ == 0 &&
@@ -47,6 +54,10 @@ void RuntimeController::set_storage_in_psram(bool storage_in_psram) {
 }
 
 bool RuntimeController::allocate_storage_() {
+  // Allocation/configuration failure is sticky. Later codegen calls must not
+  // dereference missing storage or construct a partially configured controller.
+  if (this->config_error_)
+    return false;
   if (this->storage_ != nullptr)
     return true;
 
@@ -80,42 +91,43 @@ void RuntimeController::setup() {
     this->mark_failed();
     return;
   }
-  const ResolvedPolicies old_policies = this->resolved_policies_;
-  const uint32_t old_mask = this->generic_activity_mask_;
+  {
+    Transaction transaction(*this);
+    const ResolvedPolicies old_policies = this->resolved_policies_;
+    const uint32_t old_mask = this->generic_activity_mask_;
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
-  if (this->voip_ != nullptr && !this->voip_callback_registered_) {
-    this->voip_callback_registered_ = true;
-    this->voip_->add_on_state_callback([this](voip_stack::CallState) { this->on_voip_event(); });
-  }
+    if (this->voip_ != nullptr && !this->voip_callback_registered_) {
+      this->voip_callback_registered_ = true;
+      this->voip_->add_on_state_callback([this](voip_stack::CallState) { this->on_voip_event(); });
+    }
 #endif
-  (void) this->sync_voip_activity_();
-  (void) this->apply_derived_activities_();
-  this->apply_generic_outputs_();
-  this->commit_outputs_("setup", old_mask, old_policies);
+    (void) this->sync_voip_activity_(this->capture_voip_activity_());
+    (void) this->apply_derived_activities_();
+    this->apply_generic_outputs_();
+    this->commit_outputs_("setup", old_mask, old_policies);
+  }
   if (this->pending_action_count_ == 0 && this->pending_event_count_ == 0)
     this->disable_loop();
 }
 
 void RuntimeController::loop() {
+  if (this->storage_ == nullptr || this->config_error_ || this->dispatching_)
+    return;
   this->drain_pending_actions_();
   this->drain_pending_events_();
-
-  const uint32_t old_mask = this->generic_activity_mask_;
-  const ResolvedPolicies old_policies = this->resolved_policies_;
-  if (!this->sync_voip_activity_()) {
-    if (this->pending_action_count_ == 0 && this->pending_event_count_ == 0)
-      this->disable_loop();
-    return;
-  }
-  (void) this->apply_derived_activities_();
-  this->apply_generic_outputs_();
-  this->commit_outputs_("observer", old_mask, old_policies);
+  // Do not let reconciliation overtake captured observations in the queue.
+  if (this->pending_event_count_ == 0)
+    this->on_voip_event();
   if (this->pending_action_count_ == 0 && this->pending_event_count_ == 0)
     this->disable_loop();
 }
 
 void RuntimeController::dump_config() {
   ESP_LOGCONFIG(TAG, "Runtime Controller:");
+  if (this->storage_ == nullptr) {
+    ESP_LOGE(TAG, "  Runtime storage unavailable; configuration failed");
+    return;
+  }
   ESP_LOGCONFIG(TAG, "  Activities: %u/%u", static_cast<unsigned>(this->activity_count_),
                 static_cast<unsigned>(MAX_ACTIVITIES));
   ESP_LOGCONFIG(TAG, "  Actions: %u/%u", static_cast<unsigned>(this->action_count_),
@@ -138,6 +150,8 @@ void RuntimeController::dump_config() {
 void RuntimeController::mark_config_error_() { this->config_error_ = true; }
 
 void RuntimeController::add_activity(const char *name, int16_t priority, bool initial) {
+  if (!this->allocate_storage_())
+    return;
   if (name == nullptr || name[0] == '\0')
     return;
   if (this->activity_count_ >= MAX_ACTIVITIES) {
@@ -155,6 +169,8 @@ void RuntimeController::add_activity(const char *name, int16_t priority, bool in
 }
 
 void RuntimeController::set_activity_group(const char *activity_name, const char *group) {
+  if (!this->allocate_storage_())
+    return;
   int index = this->find_activity_(activity_name);
   if (index < 0 || group == nullptr || group[0] == '\0')
     return;
@@ -162,6 +178,8 @@ void RuntimeController::set_activity_group(const char *activity_name, const char
 }
 
 void RuntimeController::add_activity_policy(const char *activity_name, const char *policy, const char *value) {
+  if (!this->allocate_storage_())
+    return;
   int index = this->find_activity_(activity_name);
   if (index < 0) {
     ESP_LOGE(TAG, "Cannot add policy '%s': unknown activity '%s'", policy != nullptr ? policy : "-",
@@ -179,6 +197,8 @@ void RuntimeController::add_activity_policy(const char *activity_name, const cha
 }
 
 void RuntimeController::add_event_activity(const char *event, const char *activity, bool active) {
+  if (!this->allocate_storage_())
+    return;
   if (event == nullptr || event[0] == '\0' || activity == nullptr || activity[0] == '\0')
     return;
   if (this->event_update_count_ >= this->storage_->event_updates.size()) {
@@ -191,6 +211,8 @@ void RuntimeController::add_event_activity(const char *event, const char *activi
 }
 
 void RuntimeController::add_event_rule(const char *event, const char *action) {
+  if (!this->allocate_storage_())
+    return;
   if (event == nullptr || event[0] == '\0')
     return;
   if (this->event_rule_count_ >= this->storage_->event_rules.size()) {
@@ -202,6 +224,8 @@ void RuntimeController::add_event_rule(const char *event, const char *action) {
 }
 
 void RuntimeController::add_event_rule_update(const char *activity, bool active) {
+  if (!this->allocate_storage_())
+    return;
   if (this->event_rule_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
   auto &rule = this->storage_->event_rules[this->event_rule_count_ - 1];
@@ -215,6 +239,8 @@ void RuntimeController::add_event_rule_update(const char *activity, bool active)
 }
 
 void RuntimeController::add_event_rule_any_active(const char *activity) {
+  if (!this->allocate_storage_())
+    return;
   if (this->event_rule_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
   auto &rule = this->storage_->event_rules[this->event_rule_count_ - 1];
@@ -229,6 +255,8 @@ void RuntimeController::add_event_rule_any_active(const char *activity) {
 }
 
 void RuntimeController::add_event_rule_all_active(const char *activity) {
+  if (!this->allocate_storage_())
+    return;
   if (this->event_rule_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
   auto &rule = this->storage_->event_rules[this->event_rule_count_ - 1];
@@ -243,6 +271,8 @@ void RuntimeController::add_event_rule_all_active(const char *activity) {
 }
 
 void RuntimeController::add_event_rule_none_active(const char *activity) {
+  if (!this->allocate_storage_())
+    return;
   if (this->event_rule_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
   auto &rule = this->storage_->event_rules[this->event_rule_count_ - 1];
@@ -257,6 +287,8 @@ void RuntimeController::add_event_rule_none_active(const char *activity) {
 }
 
 void RuntimeController::add_derived_activity(const char *activity) {
+  if (!this->allocate_storage_())
+    return;
   if (activity == nullptr || activity[0] == '\0')
     return;
   if (this->derived_activity_count_ >= this->storage_->derived_activities.size()) {
@@ -271,6 +303,8 @@ void RuntimeController::add_derived_activity(const char *activity) {
 }
 
 void RuntimeController::add_derived_any_active(const char *activity) {
+  if (!this->allocate_storage_())
+    return;
   if (this->derived_activity_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
   auto &derived = this->storage_->derived_activities[this->derived_activity_count_ - 1];
@@ -285,6 +319,8 @@ void RuntimeController::add_derived_any_active(const char *activity) {
 }
 
 void RuntimeController::add_derived_all_active(const char *activity) {
+  if (!this->allocate_storage_())
+    return;
   if (this->derived_activity_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
   auto &derived = this->storage_->derived_activities[this->derived_activity_count_ - 1];
@@ -299,6 +335,8 @@ void RuntimeController::add_derived_all_active(const char *activity) {
 }
 
 void RuntimeController::add_derived_none_active(const char *activity) {
+  if (!this->allocate_storage_())
+    return;
   if (this->derived_activity_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
   auto &derived = this->storage_->derived_activities[this->derived_activity_count_ - 1];
@@ -313,6 +351,8 @@ void RuntimeController::add_derived_none_active(const char *activity) {
 }
 
 void RuntimeController::add_action_trigger(const char *name, Trigger<> *trigger) {
+  if (!this->allocate_storage_())
+    return;
   if (name == nullptr || name[0] == '\0' || trigger == nullptr)
     return;
   if (this->action_count_ >= MAX_ACTIONS) {
@@ -324,6 +364,8 @@ void RuntimeController::add_action_trigger(const char *name, Trigger<> *trigger)
 }
 
 void RuntimeController::add_event_trigger(const char *name, Trigger<> *trigger) {
+  if (!this->allocate_storage_())
+    return;
   if (name == nullptr || name[0] == '\0' || trigger == nullptr)
     return;
   if (this->event_trigger_count_ >= MAX_ACTIONS) {
@@ -336,6 +378,8 @@ void RuntimeController::add_event_trigger(const char *name, Trigger<> *trigger) 
 }
 
 void RuntimeController::add_policy_value_trigger(const char *policy, const char *value, Trigger<> *trigger) {
+  if (!this->allocate_storage_())
+    return;
   if (policy == nullptr || policy[0] == '\0' || value == nullptr || trigger == nullptr)
     return;
   if (this->policy_value_action_count_ >= this->storage_->policy_value_actions.size()) {
@@ -347,6 +391,8 @@ void RuntimeController::add_policy_value_trigger(const char *policy, const char 
 }
 
 void RuntimeController::add_policy_output(const char *policy, const char *value, int32_t output) {
+  if (!this->allocate_storage_())
+    return;
   if (policy == nullptr || policy[0] == '\0' || value == nullptr)
     return;
   if (this->policy_output_count_ >= this->storage_->policy_outputs.size()) {
@@ -358,6 +404,8 @@ void RuntimeController::add_policy_output(const char *policy, const char *value,
 }
 
 void RuntimeController::set_policy_change_trigger(const char *policy, Trigger<int32_t> *trigger) {
+  if (!this->allocate_storage_())
+    return;
   if (policy == nullptr || policy[0] == '\0' || trigger == nullptr)
     return;
   if (this->policy_change_trigger_count_ >= this->storage_->policy_change_triggers.size()) {
@@ -370,6 +418,8 @@ void RuntimeController::set_policy_change_trigger(const char *policy, Trigger<in
 
 void RuntimeController::add_led_state(const char *state, float red, float green, float blue, float brightness,
                                       const char *effect) {
+  if (!this->allocate_storage_())
+    return;
   if (state == nullptr || state[0] == '\0')
     return;
   if (this->led_state_count_ >= this->storage_->led_states.size()) {
@@ -381,9 +431,27 @@ void RuntimeController::add_led_state(const char *state, float red, float green,
 }
 
 void RuntimeController::on_voip_event() {
+  if (this->storage_ == nullptr || this->config_error_)
+    return;
+  // Capture each callback's state now. Re-reading the live phone when draining
+  // would collapse a queued ringing -> idle pair into two idle observations.
+  const uint8_t index = this->capture_voip_activity_();
+  if (this->dispatching_ || (this->pending_event_count_ > 0 && !this->draining_pending_events_)) {
+    (void) this->enqueue_voip_activity_(index);
+    if (!this->dispatching_)
+      this->drain_pending_events_();
+    return;
+  }
+  this->process_voip_activity_(index);
+}
+
+void RuntimeController::process_voip_activity_(uint8_t index) {
+  if (index == this->last_voip_activity_index_)
+    return;
+  Transaction transaction(*this);
   const uint32_t old_mask = this->generic_activity_mask_;
   const ResolvedPolicies old_policies = this->resolved_policies_;
-  if (!this->sync_voip_activity_())
+  if (!this->sync_voip_activity_(index))
     return;
   (void) this->apply_derived_activities_();
   this->apply_generic_outputs_();
@@ -391,10 +459,15 @@ void RuntimeController::on_voip_event() {
 }
 
 void RuntimeController::event(const char *name) {
-  if (this->dispatching_) {
+  if (this->storage_ == nullptr || this->config_error_ || name == nullptr || name[0] == '\0')
+    return;
+  if (this->dispatching_ || (this->pending_event_count_ > 0 && !this->draining_pending_events_)) {
     (void) this->enqueue_event_(name);
+    if (!this->dispatching_)
+      this->drain_pending_events_();
     return;
   }
+  Transaction transaction(*this);
   if (this->debug_) {
     ESP_LOGI(TAG, "EVENT seq=%" PRIu32 " name=%s mask=0x%08" PRIx32, this->sequence_,
              name != nullptr ? name : "-", this->generic_activity_mask_);
@@ -450,10 +523,15 @@ void RuntimeController::event(const char *name) {
 }
 
 void RuntimeController::set_activity(const char *name, bool active) {
-  if (this->dispatching_) {
+  if (this->storage_ == nullptr || this->config_error_)
+    return;
+  if (this->dispatching_ || (this->pending_event_count_ > 0 && !this->draining_pending_events_)) {
     (void) this->enqueue_activity_update_(name, active);
+    if (!this->dispatching_)
+      this->drain_pending_events_();
     return;
   }
+  Transaction transaction(*this);
   const uint32_t old_mask = this->generic_activity_mask_;
   const ResolvedPolicies old_policies = this->resolved_policies_;
   bool changed = this->apply_activity_update_(name, active);
@@ -466,13 +544,16 @@ void RuntimeController::set_activity(const char *name, bool active) {
 }
 
 void RuntimeController::set_activities(const ActivityUpdate *updates, size_t count) {
-  if (updates == nullptr || count == 0)
+  if (this->storage_ == nullptr || this->config_error_ || updates == nullptr || count == 0)
     return;
-  if (this->dispatching_) {
+  if (this->dispatching_ || (this->pending_event_count_ > 0 && !this->draining_pending_events_)) {
     (void) this->enqueue_activity_updates_(updates, count);
+    if (!this->dispatching_)
+      this->drain_pending_events_();
     return;
   }
 
+  Transaction transaction(*this);
   const uint32_t old_mask = this->generic_activity_mask_;
   const ResolvedPolicies old_policies = this->resolved_policies_;
   bool changed = false;
@@ -487,10 +568,14 @@ void RuntimeController::set_activities(const ActivityUpdate *updates, size_t cou
 }
 
 void RuntimeController::request_action(const char *name) {
+  if (this->storage_ == nullptr || this->config_error_)
+    return;
   this->run_named_action_(name);
 }
 
 void RuntimeController::dump_state(const char *reason) {
+  if (this->storage_ == nullptr)
+    return;
 #ifdef USE_RUNTIME_CONTROLLER_DEBUG
   ESP_LOGI(TAG, "SNAPSHOT reason=%s seq=%" PRIu32 " mask=0x%08" PRIx32,
            reason != nullptr ? reason : "-", this->sequence_, this->generic_activity_mask_);
@@ -582,12 +667,22 @@ bool RuntimeController::apply_derived_activities_() {
 }
 
 void RuntimeController::publish_outputs_() {
-  this->publish_state_outputs_();
+#ifdef USE_RUNTIME_CONTROLLER_OUTPUT_SCRIPT
   if (this->output_script_ != nullptr)
     this->output_script_->execute();
+#endif
 }
 
 void RuntimeController::publish_state_outputs_() {
+  // Plain globals are the published snapshot. Write every binding (including
+  // policies that disappeared) before invoking any policy or output callback.
+  for (size_t i = 0; i < this->policy_global_output_count_; i++) {
+    const auto &target = this->storage_->policy_global_outputs[i];
+    if (target.set != nullptr) {
+      const char *value = find_policy_value(this->resolved_policies_, target.policy, nullptr);
+      target.set(target.target, this->resolve_policy_output_(target.policy, value));
+    }
+  }
   if (this->activity_mask_output_.target != nullptr && this->activity_mask_output_.set != nullptr)
     this->activity_mask_output_.set(this->activity_mask_output_.target, this->generic_activity_mask_);
   if (this->sequence_output_.target != nullptr && this->sequence_output_.set != nullptr)
@@ -703,10 +798,6 @@ bool RuntimeController::apply_activity_update_by_index_(int index, bool active) 
   return changed;
 }
 
-bool RuntimeController::set_activity_value_if_known_(const char *name, bool active) {
-  return this->find_activity_(name) >= 0 && this->apply_activity_update_(name, active);
-}
-
 void RuntimeController::commit_outputs_(const char *reason, uint32_t old_mask, const ResolvedPolicies &old_policies) {
   if (old_mask == this->generic_activity_mask_) {
     bool policy_changed = old_policies.value_count != this->resolved_policies_.value_count;
@@ -725,13 +816,12 @@ void RuntimeController::commit_outputs_(const char *reason, uint32_t old_mask, c
     ESP_LOGI(TAG, "REDUCE seq=%" PRIu32 " reason=%s mask=0x%08" PRIx32 "->0x%08" PRIx32, this->sequence_,
              reason != nullptr ? reason : "-", old_mask, this->generic_activity_mask_);
   }
-  const bool was_dispatching = this->dispatching_;
-  this->dispatching_ = true;
-  this->run_policy_actions_(old_policies, this->resolved_policies_);
+  // The enclosing transaction keeps this snapshot immutable until its effects,
+  // output script and event.then finish. Nested inputs only append to the queue.
+  const ResolvedPolicies new_policies = this->resolved_policies_;
+  this->publish_state_outputs_();
+  this->run_policy_actions_(old_policies, new_policies);
   this->publish_outputs_();
-  this->dispatching_ = was_dispatching;
-  if (!this->dispatching_ && !this->draining_pending_events_)
-    this->drain_pending_events_();
 }
 
 void RuntimeController::build_voip_activity_name_(const char *state) {
@@ -751,26 +841,31 @@ void RuntimeController::build_voip_activity_name_(const char *state) {
 #endif
 }
 
-bool RuntimeController::sync_voip_activity_() {
+uint8_t RuntimeController::capture_voip_activity_() {
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
   if (this->voip_ == nullptr || this->voip_activity_prefix_ == nullptr)
-    return false;
+    return INVALID_ACTIVITY;
 
   this->build_voip_activity_name_(this->voip_->get_call_state_str());
-  if (str_eq(this->voip_activity_, this->last_voip_activity_))
-    return false;
-
-  bool changed = false;
-  if (this->last_voip_activity_[0] != '\0')
-    changed |= this->set_activity_value_if_known_(this->last_voip_activity_, false);
-  if (this->voip_activity_[0] != '\0')
-    changed |= this->set_activity_value_if_known_(this->voip_activity_, true);
-
-  std::snprintf(this->last_voip_activity_, sizeof(this->last_voip_activity_), "%s", this->voip_activity_);
-  return changed;
+  return activity_index_or_invalid(this->find_activity_(this->voip_activity_));
 #else
-  return false;
+  return INVALID_ACTIVITY;
 #endif
+}
+
+bool RuntimeController::sync_voip_activity_(uint8_t index) {
+  if (index == this->last_voip_activity_index_)
+    return false;
+  bool changed = false;
+  changed |= this->apply_activity_update_by_index_(this->last_voip_activity_index_, false);
+  changed |= this->apply_activity_update_by_index_(index, true);
+
+  this->last_voip_activity_index_ = index;
+  const char *name = index != INVALID_ACTIVITY && index < this->activity_count_
+                         ? this->storage_->activities[index].name
+                         : "";
+  std::snprintf(this->last_voip_activity_, sizeof(this->last_voip_activity_), "%s", name);
+  return changed;
 }
 
 void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies, const ResolvedPolicies &new_policies) {
@@ -786,12 +881,6 @@ void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies
       }
     }
     const int32_t output = this->resolve_policy_output_(policy, value);
-    for (size_t j = 0; j < this->policy_global_output_count_; j++) {
-      const auto &target = this->storage_->policy_global_outputs[j];
-      if (target.set != nullptr && str_eq(target.policy, policy)) {
-        target.set(target.target, output);
-      }
-    }
     for (size_t j = 0; j < this->policy_change_trigger_count_; j++) {
       const auto &trigger = this->storage_->policy_change_triggers[j];
       if (str_eq(trigger.policy, policy)) {
@@ -823,6 +912,7 @@ void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies
 }
 
 void RuntimeController::apply_led_state_(const char *state) {
+#ifdef USE_RUNTIME_CONTROLLER_LED
   if (this->led_light_ == nullptr)
     return;
   if (state == nullptr) {
@@ -854,6 +944,9 @@ void RuntimeController::apply_led_state_(const char *state) {
   call.set_effect(match->effect != nullptr ? match->effect : "None");
   call.set_save(false);
   call.perform();
+#else
+  (void) state;
+#endif
 }
 
 int32_t RuntimeController::resolve_policy_output_(const char *policy, const char *value) const {
@@ -868,7 +961,7 @@ int32_t RuntimeController::resolve_policy_output_(const char *policy, const char
 }
 
 int RuntimeController::find_activity_(const char *name) const {
-  if (name == nullptr)
+  if (this->storage_ == nullptr || name == nullptr)
     return -1;
   for (size_t i = 0; i < this->activity_count_; i++) {
     if (str_eq(this->storage_->activities[i].name, name))
@@ -878,7 +971,7 @@ int RuntimeController::find_activity_(const char *name) const {
 }
 
 int RuntimeController::find_action_(const char *name) const {
-  if (name == nullptr)
+  if (this->storage_ == nullptr || name == nullptr)
     return -1;
   for (size_t i = 0; i < this->action_count_; i++) {
     if (str_eq(this->storage_->actions[i].name, name))
@@ -888,7 +981,7 @@ int RuntimeController::find_action_(const char *name) const {
 }
 
 int RuntimeController::find_event_trigger_(const char *name) const {
-  if (name == nullptr)
+  if (this->storage_ == nullptr || name == nullptr)
     return -1;
   for (size_t i = 0; i < this->event_trigger_count_; i++) {
     if (str_eq(this->storage_->event_triggers[i].name, name))
@@ -964,8 +1057,25 @@ bool RuntimeController::enqueue_activity_updates_(const ActivityUpdate *updates,
   return true;
 }
 
+bool RuntimeController::enqueue_voip_activity_(uint8_t index) {
+  if (this->pending_event_count_ >= this->storage_->pending_events.size()) {
+    ESP_LOGE(TAG, "Cannot queue VoIP observation: queue full");
+    // Keep the loop awake so the normal observer can reconcile the latest
+    // phone state after draining. Intermediate overflowing transitions are lost.
+    this->enable_loop_soon_any_context();
+    return false;
+  }
+  auto &event = this->storage_->pending_events[this->pending_event_count_++];
+  event.kind = PendingEventKind::VOIP_ACTIVITY;
+  event.name[0] = '\0';
+  event.update_count = 0;
+  event.voip_activity_index = index;
+  this->enable_loop_soon_any_context();
+  return true;
+}
+
 void RuntimeController::drain_pending_events_() {
-  if (this->dispatching_ || this->draining_pending_events_)
+  if (this->storage_ == nullptr || this->config_error_ || this->dispatching_ || this->draining_pending_events_)
     return;
   this->draining_pending_events_ = true;
   // Process only the batch present on entry. Events emitted by that batch stay
@@ -983,8 +1093,10 @@ void RuntimeController::drain_pending_events_() {
 
     if (event.kind == PendingEventKind::EVENT) {
       this->event(event.name);
-    } else {
+    } else if (event.kind == PendingEventKind::SET_ACTIVITIES) {
       this->set_activities(event.updates, event.update_count);
+    } else {
+      this->process_voip_activity_(event.voip_activity_index);
     }
   }
   this->draining_pending_events_ = false;
@@ -1048,13 +1160,9 @@ void RuntimeController::run_event_trigger_(const char *name) {
     return;
   if (this->debug_)
     ESP_LOGI(TAG, "EVENT_THEN seq=%" PRIu32 " name=%s", this->sequence_, this->storage_->event_triggers[index].name);
-  const bool was_dispatching = this->dispatching_;
-  this->dispatching_ = true;
+  // Called inside the input's transaction. Its named action has already been
+  // queued, and nested events cannot run until this trigger has returned.
   this->storage_->event_triggers[index].trigger->trigger();
-  this->dispatching_ = was_dispatching;
-  if (!this->dispatching_ && !this->draining_pending_events_) {
-    this->drain_pending_events_();
-  }
 }
 
 }  // namespace esphome::runtime_controller

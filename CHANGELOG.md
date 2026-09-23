@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026.10.0-dev: reliable full profiles and optional features
+
+This development preview requires ESPHome 2026.9.0 or newer. Update Intercom and Runtime Controller together.
+
+- Voice Assistant returns to idle after speaking even when music was paused beforehand.
+- Overlapping voice, call, timer and media events update the device state consistently.
+- Stopping one timer does not dismiss another alarm or interrupt an incoming call.
+- Wi-Fi, media-player and mute state use existing native callbacks. Voice Assistant and wake-word wiring uses shared standard ESPHome callbacks.
+- Packages can select voice, media, timers, ringtone, display and LED features separately. The full preset still includes the complete experience.
+- LED and script dependencies are included only when configured.
+
+Custom YAMLs may need changes: see the [migration guide](https://github.com/n-IA-hane/esphome-runtime-controller/blob/dev/MIGRATION.md) and [Intercom package guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/README.md).
+
+Rebuild and upload your firmware. Installing the Home Assistant integration alone does not update the device.
+
+Thank you to everyone supporting the project through GitHub Sponsors, including the latest donation, and to the contributors sharing fixes and hardware feedback.
+
+---
+
 ## ESPHome Runtime Controller 2026.9.2
 
 This release identifies the Runtime Controller used by ESPHome Intercom 2026.9.2.

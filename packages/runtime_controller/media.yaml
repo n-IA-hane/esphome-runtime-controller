@@ -1,0 +1,23 @@
+# Optional media policy bindings.
+runtime_controller:
+  features: [media_player]
+  observe:
+    media_player: speaker_media_player
+  policies:
+    audio_policy:
+      output: g_ducking_active
+      values:
+        normal:
+          value: 0
+          then:
+            - mixer_speaker.apply_ducking:
+                id: media_mixer_input
+                decibel_reduction: 0
+                duration: 500ms
+        duck:
+          value: 1
+          then:
+            - mixer_speaker.apply_ducking:
+                id: media_mixer_input
+                decibel_reduction: 20
+                duration: 200ms

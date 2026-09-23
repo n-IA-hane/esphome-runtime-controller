@@ -1,0 +1,24 @@
+# Optional display policy bindings.
+runtime_controller:
+  policies:
+    display_status:
+      output: ui_state
+      on_change:
+        - script.execute: render_ui_state
+      values:
+        idle: ${ui_state_idle}
+        boot: ${ui_state_init}
+        no_wifi: ${ui_state_no_wifi}
+        no_ha: ${ui_state_no_ha}
+        muted: ${ui_state_mic_muted}
+        wake: ${ui_state_mww_recent}
+        listening: ${ui_state_va_listening}
+        thinking: ${ui_state_va_thinking}
+        responding: ${ui_state_va_replying}
+        voip_ringing: ${ui_state_call_ringing}
+        voip_calling: ${ui_state_ic_calling}
+        voip_in_call: ${ui_state_call_in_call}
+        error: ${ui_state_va_error}
+        media: ${ui_state_media}
+        no_va: ${ui_state_no_va}
+        timer_ringing: ${ui_state_media}

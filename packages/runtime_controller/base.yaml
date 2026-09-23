@@ -1,0 +1,10 @@
+# Reducer only. Feature adapters add their own dependencies and effects.
+esphome:
+  min_version: 2026.9.0
+substitutions:
+  runtime_controller_debug: "false"
+runtime_controller:
+  id: runtime
+  debug: ${runtime_controller_debug}
+  profile: full_voice_voip
+  features: []

@@ -201,7 +201,7 @@ def test_manual_stop_blocks_restart_until_va_end() -> None:
     assert active_pipeline_case[module.CONF_ACTION] == "voice_stop_pipeline"
 
     va_end = module.FULL_VOICE_VOIP_EVENTS["va_end"]
-    assert "va_stopping" in va_end[module.CONF_DEACTIVATE]
+    assert "va_stopping" not in va_end[module.CONF_DEACTIVATE]
     assert (
         module.FULL_VOICE_VOIP_EVENTS["va_stop_complete"][module.CONF_DEACTIVATE]
         == "va_stopping"
@@ -215,7 +215,7 @@ def test_manual_stop_blocks_restart_until_va_end() -> None:
     )
     assert module.CONF_ACTION not in stopping_case
 
-    for package_name in ("full_controller.yaml", "full_controller_no_led.yaml"):
+    for package_name in ("voice.yaml",):
         package = (ROOT / "packages" / "runtime_controller" / package_name).read_text(
             encoding="utf-8"
         )

@@ -1,0 +1,13 @@
+# Optional ringtone policy bindings.
+runtime_controller:
+  observe:
+    voip_stack: phone
+  policies:
+    ringtone:
+      values:
+        play:
+          then:
+            - script.execute: voip_start_ringtone
+        stop:
+          then:
+            - script.execute: voip_stop_ringtone
