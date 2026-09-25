@@ -1,8 +1,8 @@
 # Changelog
 
-## 2026.10.0-dev: reliable full profiles and optional features
+## 2026.10.0: reliable full profiles and optional features
 
-This development preview requires ESPHome 2026.9.0 or newer. Update Intercom and Runtime Controller together.
+This release candidate requires ESPHome 2026.9.0 or newer. Update Intercom and Runtime Controller together.
 
 - Voice Assistant returns to idle after speaking even when music was paused beforehand.
 - Overlapping voice, call, timer and media events update the device state consistently.
