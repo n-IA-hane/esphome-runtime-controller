@@ -2,7 +2,7 @@
 
 ## 2026.10.0: more reliable voice controls and simpler YAML packages
 
-Release candidate. Changes since stable **2026.9.2**.
+Changes since stable **2026.9.2**.
 
 ### Voice responses, stop commands and timers
 

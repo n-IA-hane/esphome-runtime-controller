@@ -13,10 +13,9 @@ happening; priorities decide what the LED, display, ringtone and audio controls
 should do. The audio components still own playback and the VoIP component still
 owns calls.
 
-**2026.10.0 release candidate:** requires ESPHome **2026.9.0 or newer**.
-See the [changes since 2026.9.2](CHANGELOG.md) and [migration guide](MIGRATION.md).
-The stable release is [2026.9.2](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.9.2)
-until the candidate is published.
+Stable release: [2026.10.0](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.0).
+Requires ESPHome **2026.9.0 or newer**. See the
+[changes since 2026.9.2](CHANGELOG.md) and [migration guide](MIGRATION.md).
 
 ## Start with a maintained device profile
 
