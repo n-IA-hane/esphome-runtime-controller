@@ -49,8 +49,9 @@ and each mute observer are also compiled only when selected.
 
 ### Updating an existing device
 
-Use **ESPHome 2026.9.0 or newer** and update Intercom and Runtime Controller
-together.
+Use **ESPHome 2026.9.0 or newer**. Update the firmware packages from the Intercom
+repository together with Runtime Controller. The Home Assistant integration does
+not need the same version number as the ESP firmware.
 
 The easiest option is to start from one of our updated
 [maintained YAML profiles](https://github.com/n-IA-hane/esphome-intercom/tree/main/yamls)

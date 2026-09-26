@@ -1,7 +1,9 @@
 # Updating to Runtime Controller 2026.10.0
 
-Use ESPHome **2026.9.0 or newer**. Update the matching Intercom packages and
-Runtime Controller together, then rebuild and upload the device firmware.
+Use ESPHome **2026.9.0 or newer**. Update the firmware packages from the Intercom
+repository together with Runtime Controller, then rebuild and upload the device.
+This is a firmware dependency update, not a requirement to match the version of
+the Home Assistant integration.
 
 The easiest path is to start from an updated
 [maintained device YAML](https://github.com/n-IA-hane/esphome-intercom/tree/main/yamls)
