@@ -5,13 +5,16 @@
 #ifdef USE_RUNTIME_CONTROLLER_WIFI
 #include "esphome/components/wifi/wifi_component.h"
 #endif
-#ifdef USE_RUNTIME_CONTROLLER_SWITCH
+#if defined(USE_RUNTIME_CONTROLLER_MICROPHONE_MUTE) || defined(USE_RUNTIME_CONTROLLER_SPEAKER_MUTE)
 #include "esphome/components/switch/switch.h"
 #endif
 
 #ifdef USE_RUNTIME_CONTROLLER_MEDIA_PLAYER
 #include "esphome/components/media_player/media_player.h"
 #endif
+
+#if defined(USE_RUNTIME_CONTROLLER_WIFI) || defined(USE_RUNTIME_CONTROLLER_MEDIA_PLAYER) || \
+    defined(USE_RUNTIME_CONTROLLER_MICROPHONE_MUTE) || defined(USE_RUNTIME_CONTROLLER_SPEAKER_MUTE)
 
 namespace esphome::runtime_controller {
 
@@ -36,8 +39,10 @@ class RuntimeNetworkObservers : public Component
   void set_wifi(wifi::WiFiComponent *wifi) { this->wifi_ = wifi; }
   void on_wifi_connect_state(StringRef ssid, std::span<const uint8_t, 6> bssid) override;
 #endif
-#ifdef USE_RUNTIME_CONTROLLER_SWITCH
+#ifdef USE_RUNTIME_CONTROLLER_MICROPHONE_MUTE
   void set_microphone_mute(switch_::Switch *mute) { this->microphone_mute_ = mute; }
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_SPEAKER_MUTE
   void set_speaker_mute(switch_::Switch *mute) { this->speaker_mute_ = mute; }
 #endif
 
@@ -49,10 +54,14 @@ class RuntimeNetworkObservers : public Component
 #ifdef USE_RUNTIME_CONTROLLER_WIFI
   wifi::WiFiComponent *wifi_{nullptr};
 #endif
-#ifdef USE_RUNTIME_CONTROLLER_SWITCH
+#ifdef USE_RUNTIME_CONTROLLER_MICROPHONE_MUTE
   switch_::Switch *microphone_mute_{nullptr};
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_SPEAKER_MUTE
   switch_::Switch *speaker_mute_{nullptr};
 #endif
 };
 
 }  // namespace esphome::runtime_controller
+
+#endif

@@ -1368,7 +1368,7 @@ async def to_code(config):
                 cg.add_define(
                     "USE_RUNTIME_CONTROLLER_MEDIA_PLAYER"
                     if key == CONF_MEDIA_PLAYER
-                    else "USE_RUNTIME_CONTROLLER_SWITCH"
+                    else f"USE_RUNTIME_CONTROLLER_{key.upper()}"
                 )
                 cg.add(getattr(observer, setter)(await cg.get_variable(observed[key])))
 

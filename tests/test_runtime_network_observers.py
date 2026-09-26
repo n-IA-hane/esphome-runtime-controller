@@ -1,6 +1,7 @@
 """Compile the native network/switch adapters with all optional feature sets."""
 
 from pathlib import Path
+from itertools import combinations
 import subprocess
 
 import pytest
@@ -13,12 +14,11 @@ COMPONENT = ROOT / "esphome/components/runtime_controller"
 @pytest.mark.parametrize(
     "features",
     [
-        (),
-        ("WIFI",),
-        ("SWITCH",),
-        ("WIFI", "SWITCH"),
-        ("MEDIA_PLAYER",),
-        ("WIFI", "SWITCH", "MEDIA_PLAYER"),
+        features
+        for count in range(5)
+        for features in combinations(
+            ("WIFI", "MEDIA_PLAYER", "MICROPHONE_MUTE", "SPEAKER_MUTE"), count
+        )
     ],
 )
 def test_native_network_observers_preserve_callbacks_and_replay_state(
@@ -152,15 +152,20 @@ int main() {
   wifi.connected=true; observer.set_wifi(&wifi);
   expected.emplace_back("wifi_connected");
 #endif
-#ifdef USE_RUNTIME_CONTROLLER_SWITCH
-  switch_::Switch microphone, speaker;
-  int microphone_user_calls=0, speaker_user_calls=0;
+#ifdef USE_RUNTIME_CONTROLLER_MICROPHONE_MUTE
+  switch_::Switch microphone;
+  int microphone_user_calls=0;
   microphone.add_on_state_callback([&](bool) { ++microphone_user_calls; });
-  speaker.add_on_state_callback([&](bool) { ++speaker_user_calls; });
-  microphone.state=true; speaker.state=false;
+  microphone.state=true;
   observer.set_microphone_mute(&microphone);
-  observer.set_speaker_mute(&speaker);
   expected.emplace_back("mic_muted");
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_SPEAKER_MUTE
+  switch_::Switch speaker;
+  int speaker_user_calls=0;
+  speaker.add_on_state_callback([&](bool) { ++speaker_user_calls; });
+  speaker.state=false;
+  observer.set_speaker_mute(&speaker);
   expected.emplace_back("speaker_unmuted");
 #endif
 #ifdef USE_RUNTIME_CONTROLLER_MEDIA_PLAYER
@@ -179,13 +184,15 @@ int main() {
   assert(existing_wifi.calls==2);
   assert(wifi.listeners.size()==2);
 #endif
-#ifdef USE_RUNTIME_CONTROLLER_SWITCH
+#ifdef USE_RUNTIME_CONTROLLER_MICROPHONE_MUTE
   microphone.publish_state(false); expected.emplace_back("mic_unmuted");
-  speaker.publish_state(true); expected.emplace_back("speaker_muted");
   microphone.publish_state(true); expected.emplace_back("mic_muted");
+  assert(microphone_user_calls==2 && microphone.callbacks.size()==2);
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_SPEAKER_MUTE
+  speaker.publish_state(true); expected.emplace_back("speaker_muted");
   speaker.publish_state(false); expected.emplace_back("speaker_unmuted");
-  assert(microphone_user_calls==2 && speaker_user_calls==2);
-  assert(microphone.callbacks.size()==2 && speaker.callbacks.size()==2);
+  assert(speaker_user_calls==2 && speaker.callbacks.size()==2);
 #endif
   assert(runtime.events==expected);
 
@@ -205,6 +212,8 @@ int main() {
   optional.setup(); assert(optional_runtime.events.empty());
 }
 """)
+    if not features:
+        main.write_text('#include "runtime_network_observers.h"\nint main() {}\n')
     binary = tmp_path / "native_observers"
     subprocess.run(
         [
@@ -226,3 +235,7 @@ int main() {
         text=True,
     )
     subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+
+    symbols = subprocess.check_output(["nm", "-C", str(binary)], text=True)
+    if not features:
+        assert "RuntimeNetworkObservers" not in symbols

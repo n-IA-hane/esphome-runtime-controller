@@ -41,9 +41,13 @@ class RuntimeController : public Component {
 
   void set_debug(bool debug) { this->debug_ = debug; }
   void set_storage_in_psram(bool storage_in_psram);
+#ifdef USE_RUNTIME_CONTROLLER_OUTPUT_SCRIPT
   void set_output_script(script::Script<> *script) { this->output_script_ = script; }
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   void set_voip(voip_stack::VoipStack *voip) { this->voip_ = voip; }
   void set_voip_activity_prefix(const char *prefix) { this->voip_activity_prefix_ = prefix; }
+#endif
   void add_activity(const char *name, int16_t priority, bool initial);
   void set_activity_group(const char *activity, const char *group);
   void add_activity_policy(const char *activity, const char *policy, const char *value);
@@ -62,8 +66,10 @@ class RuntimeController : public Component {
   void add_policy_value_trigger(const char *policy, const char *value, Trigger<> *trigger);
   void add_policy_output(const char *policy, const char *value, int32_t output);
   void set_policy_change_trigger(const char *policy, Trigger<int32_t> *trigger);
+#ifdef USE_RUNTIME_CONTROLLER_LED
   void set_led_light(light::LightState *light) { this->led_light_ = light; }
   void add_led_state(const char *state, float red, float green, float blue, float brightness, const char *effect);
+#endif
   template<typename C> void add_policy_global_output(const char *policy, C *target);
   template<typename C> void set_activity_mask_output(C *target) {
     if (target == nullptr)
@@ -88,7 +94,9 @@ class RuntimeController : public Component {
     };
   }
 
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   void on_voip_event();
+#endif
   void event(const char *name);
   void set_activity(const char *name, bool active);
   void set_activities(const ActivityUpdate *updates, size_t count);
@@ -137,10 +145,12 @@ class RuntimeController : public Component {
   bool apply_activity_update_(const ActivityUpdate &update);
   bool apply_activity_update_by_index_(int index, bool active);
   void commit_outputs_(const char *reason, uint32_t old_mask, const ResolvedPolicies &old_policies);
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   uint8_t capture_voip_activity_();
   bool sync_voip_activity_(uint8_t index);
   void process_voip_activity_(uint8_t index);
   void build_voip_activity_name_(const char *state);
+#endif
   int find_activity_(const char *name) const;
   int find_action_(const char *name) const;
   int find_event_trigger_(const char *name) const;
@@ -152,30 +162,44 @@ class RuntimeController : public Component {
   bool enqueue_event_(const char *name);
   bool enqueue_activity_update_(const char *name, bool active);
   bool enqueue_activity_updates_(const ActivityUpdate *updates, size_t count);
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   bool enqueue_voip_activity_(uint8_t index);
+#endif
   void drain_pending_events_();
   void run_named_action_(const char *name);
   void execute_named_action_(const char *name);
   void drain_pending_actions_();
   void run_event_trigger_(const char *name);
   void run_policy_actions_(const ResolvedPolicies &old_policies, const ResolvedPolicies &new_policies);
+#ifdef USE_RUNTIME_CONTROLLER_LED
   void apply_led_state_(const char *state);
+#endif
   int32_t resolve_policy_output_(const char *policy, const char *value) const;
   void mark_config_error_();
 
+#ifdef USE_RUNTIME_CONTROLLER_OUTPUT_SCRIPT
   script::Script<> *output_script_{nullptr};
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_LED
   light::LightState *led_light_{nullptr};
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   voip_stack::VoipStack *voip_{nullptr};
   const char *voip_activity_prefix_{nullptr};
+#endif
 
   bool debug_{false};
   bool config_error_{false};
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   bool voip_callback_registered_{false};
+#endif
   uint32_t sequence_{0};
   ResolvedPolicies resolved_policies_{};
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   char voip_activity_[64]{};
   char last_voip_activity_[64]{};
   uint8_t last_voip_activity_index_{INVALID_ACTIVITY};
+#endif
 
   struct ActivityConfig {
     const char *name{nullptr};
@@ -253,6 +277,7 @@ class RuntimeController : public Component {
     void *target{nullptr};
     void (*set)(void *, uint32_t){nullptr};
   };
+#ifdef USE_RUNTIME_CONTROLLER_LED
   struct LedState {
     const char *state{nullptr};
     float red{0.0f};
@@ -261,17 +286,22 @@ class RuntimeController : public Component {
     float brightness{0.0f};
     const char *effect{"None"};
   };
+#endif
   enum class PendingEventKind : uint8_t {
     EVENT,
     SET_ACTIVITIES,
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
     VOIP_ACTIVITY,
+#endif
   };
   struct PendingEvent {
     PendingEventKind kind{PendingEventKind::EVENT};
     char name[48]{};
     ActivityUpdate updates[16]{};
     size_t update_count{0};
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
     uint8_t voip_activity_index{INVALID_ACTIVITY};
+#endif
   };
 
   struct Storage {
@@ -285,7 +315,9 @@ class RuntimeController : public Component {
     std::array<PolicyOutput, 64> policy_outputs{};
     std::array<PolicyChangeTrigger, MAX_POLICIES> policy_change_triggers{};
     std::array<PolicyGlobalOutput, MAX_POLICIES> policy_global_outputs{};
+#ifdef USE_RUNTIME_CONTROLLER_LED
     std::array<LedState, 32> led_states{};
+#endif
     std::array<const char *, 16> pending_actions{};
     std::array<PendingEvent, 16> pending_events{};
   };
@@ -307,7 +339,9 @@ class RuntimeController : public Component {
   size_t policy_output_count_{0};
   size_t policy_change_trigger_count_{0};
   size_t policy_global_output_count_{0};
+#ifdef USE_RUNTIME_CONTROLLER_LED
   size_t led_state_count_{0};
+#endif
   size_t pending_action_count_{0};
   size_t pending_event_count_{0};
   bool dispatching_{false};

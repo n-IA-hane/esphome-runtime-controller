@@ -360,7 +360,9 @@ static void test_allocation_failure_is_fail_closed() {
   Global<uint32_t> mask, sequence;
   esphome::light::LightState light;
   esphome::script::Script<> output;
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   esphome::voip_stack::VoipStack phone;
+#endif
   // This is the codegen sequence after the first allocation failed. Exercise
   // every storage-backed configurator instead of only the first crashing one.
   runtime.add_activity("idle", 0, true);
@@ -387,8 +389,10 @@ static void test_allocation_failure_is_fail_closed() {
   runtime.set_output_script(&output);
   runtime.set_activity_mask_output(&mask);
   runtime.set_sequence_output(&sequence);
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   runtime.set_voip(&phone);
   runtime.set_voip_activity_prefix("voip:");
+#endif
   runtime.set_debug(true);
   runtime.dump_config();
   runtime.dump_state("failed");
@@ -405,7 +409,9 @@ static void test_allocation_failure_is_fail_closed() {
   runtime.set_activity("idle", true);
   runtime.set_activities(&update, 1);
   runtime.request_action("action");
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   runtime.on_voip_event();
+#endif
   runtime.loop();
   runtime.setup();
   assert(!runtime.is_activity_active("idle"));

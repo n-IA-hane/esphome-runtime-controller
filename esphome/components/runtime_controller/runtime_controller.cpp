@@ -41,7 +41,10 @@ void RuntimeController::set_storage_in_psram(bool storage_in_psram) {
         this->event_update_count_ == 0 && this->event_rule_count_ == 0 && this->derived_activity_count_ == 0 &&
         this->policy_value_action_count_ == 0 && this->policy_output_count_ == 0 &&
         this->policy_change_trigger_count_ == 0 && this->policy_global_output_count_ == 0 &&
-        this->led_state_count_ == 0 && this->pending_action_count_ == 0 && this->pending_event_count_ == 0;
+#ifdef USE_RUNTIME_CONTROLLER_LED
+        this->led_state_count_ == 0 &&
+#endif
+        this->pending_action_count_ == 0 && this->pending_event_count_ == 0;
     if (!storage_is_empty) {
       ESP_LOGE(TAG, "Cannot change runtime storage placement after configuration has started");
       this->mark_config_error_();
@@ -101,7 +104,9 @@ void RuntimeController::setup() {
       this->voip_->add_on_state_callback([this](voip_stack::CallState) { this->on_voip_event(); });
     }
 #endif
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
     (void) this->sync_voip_activity_(this->capture_voip_activity_());
+#endif
     (void) this->apply_derived_activities_();
     this->apply_generic_outputs_();
     this->commit_outputs_("setup", old_mask, old_policies);
@@ -115,9 +120,11 @@ void RuntimeController::loop() {
     return;
   this->drain_pending_actions_();
   this->drain_pending_events_();
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
   // Do not let reconciliation overtake captured observations in the queue.
   if (this->pending_event_count_ == 0)
     this->on_voip_event();
+#endif
   if (this->pending_action_count_ == 0 && this->pending_event_count_ == 0)
     this->disable_loop();
 }
@@ -416,6 +423,7 @@ void RuntimeController::set_policy_change_trigger(const char *policy, Trigger<in
   this->storage_->policy_change_triggers[this->policy_change_trigger_count_++] = PolicyChangeTrigger{policy, trigger};
 }
 
+#ifdef USE_RUNTIME_CONTROLLER_LED
 void RuntimeController::add_led_state(const char *state, float red, float green, float blue, float brightness,
                                       const char *effect) {
   if (!this->allocate_storage_())
@@ -430,6 +438,9 @@ void RuntimeController::add_led_state(const char *state, float red, float green,
   this->storage_->led_states[this->led_state_count_++] = LedState{state, red, green, blue, brightness, effect};
 }
 
+#endif
+
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
 void RuntimeController::on_voip_event() {
   if (this->storage_ == nullptr || this->config_error_)
     return;
@@ -457,6 +468,8 @@ void RuntimeController::process_voip_activity_(uint8_t index) {
   this->apply_generic_outputs_();
   this->commit_outputs_("voip_event", old_mask, old_policies);
 }
+
+#endif
 
 void RuntimeController::event(const char *name) {
   if (this->storage_ == nullptr || this->config_error_ || name == nullptr || name[0] == '\0')
@@ -824,9 +837,9 @@ void RuntimeController::commit_outputs_(const char *reason, uint32_t old_mask, c
   this->publish_outputs_();
 }
 
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
 void RuntimeController::build_voip_activity_name_(const char *state) {
   this->voip_activity_[0] = '\0';
-#ifdef USE_RUNTIME_CONTROLLER_VOIP
   if (this->voip_activity_prefix_ == nullptr || this->voip_activity_prefix_[0] == '\0' || state == nullptr ||
       state[0] == '\0')
     return;
@@ -836,21 +849,14 @@ void RuntimeController::build_voip_activity_name_(const char *state) {
     ESP_LOGE(TAG, "VoIP activity name is too long; ignoring state '%s'", state);
     this->voip_activity_[0] = '\0';
   }
-#else
-  (void) state;
-#endif
 }
 
 uint8_t RuntimeController::capture_voip_activity_() {
-#ifdef USE_RUNTIME_CONTROLLER_VOIP
   if (this->voip_ == nullptr || this->voip_activity_prefix_ == nullptr)
     return INVALID_ACTIVITY;
 
   this->build_voip_activity_name_(this->voip_->get_call_state_str());
   return activity_index_or_invalid(this->find_activity_(this->voip_activity_));
-#else
-  return INVALID_ACTIVITY;
-#endif
 }
 
 bool RuntimeController::sync_voip_activity_(uint8_t index) {
@@ -868,10 +874,14 @@ bool RuntimeController::sync_voip_activity_(uint8_t index) {
   return changed;
 }
 
+#endif
+
 void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies, const ResolvedPolicies &new_policies) {
   auto apply_change = [this](const char *policy, const char *value) {
+#ifdef USE_RUNTIME_CONTROLLER_LED
     if (str_eq(policy, "led_status"))
       this->apply_led_state_(value);
+#endif
     for (size_t j = 0; j < this->policy_value_action_count_; j++) {
       const auto &action = this->storage_->policy_value_actions[j];
       if (value != nullptr && str_eq(action.policy, policy) && str_eq(action.value, value)) {
@@ -911,8 +921,8 @@ void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies
   }
 }
 
-void RuntimeController::apply_led_state_(const char *state) {
 #ifdef USE_RUNTIME_CONTROLLER_LED
+void RuntimeController::apply_led_state_(const char *state) {
   if (this->led_light_ == nullptr)
     return;
   if (state == nullptr) {
@@ -944,10 +954,9 @@ void RuntimeController::apply_led_state_(const char *state) {
   call.set_effect(match->effect != nullptr ? match->effect : "None");
   call.set_save(false);
   call.perform();
-#else
-  (void) state;
-#endif
 }
+
+#endif
 
 int32_t RuntimeController::resolve_policy_output_(const char *policy, const char *value) const {
   if (policy == nullptr || value == nullptr)
@@ -1057,6 +1066,7 @@ bool RuntimeController::enqueue_activity_updates_(const ActivityUpdate *updates,
   return true;
 }
 
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
 bool RuntimeController::enqueue_voip_activity_(uint8_t index) {
   if (this->pending_event_count_ >= this->storage_->pending_events.size()) {
     ESP_LOGE(TAG, "Cannot queue VoIP observation: queue full");
@@ -1073,6 +1083,8 @@ bool RuntimeController::enqueue_voip_activity_(uint8_t index) {
   this->enable_loop_soon_any_context();
   return true;
 }
+
+#endif
 
 void RuntimeController::drain_pending_events_() {
   if (this->storage_ == nullptr || this->config_error_ || this->dispatching_ || this->draining_pending_events_)
@@ -1095,9 +1107,12 @@ void RuntimeController::drain_pending_events_() {
       this->event(event.name);
     } else if (event.kind == PendingEventKind::SET_ACTIVITIES) {
       this->set_activities(event.updates, event.update_count);
-    } else {
+    }
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
+    else {
       this->process_voip_activity_(event.voip_activity_index);
     }
+#endif
   }
   this->draining_pending_events_ = false;
 }

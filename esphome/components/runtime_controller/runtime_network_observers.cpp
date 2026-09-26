@@ -1,5 +1,8 @@
 #include "runtime_network_observers.h"
 
+#if defined(USE_RUNTIME_CONTROLLER_WIFI) || defined(USE_RUNTIME_CONTROLLER_MEDIA_PLAYER) || \
+    defined(USE_RUNTIME_CONTROLLER_MICROPHONE_MUTE) || defined(USE_RUNTIME_CONTROLLER_SPEAKER_MUTE)
+
 #include "esphome/components/runtime_controller/runtime_controller.h"
 
 namespace esphome::runtime_controller {
@@ -18,13 +21,15 @@ void RuntimeNetworkObservers::setup() {
     this->runtime_->event(this->wifi_->is_connected() ? "wifi_connected" : "wifi_disconnected");
   }
 #endif
-#ifdef USE_RUNTIME_CONTROLLER_SWITCH
+#ifdef USE_RUNTIME_CONTROLLER_MICROPHONE_MUTE
   if (this->microphone_mute_ != nullptr) {
     this->microphone_mute_->add_on_state_callback([this](bool muted) {
       this->runtime_->event(muted ? "mic_muted" : "mic_unmuted");
     });
     this->runtime_->event(this->microphone_mute_->state ? "mic_muted" : "mic_unmuted");
   }
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_SPEAKER_MUTE
   if (this->speaker_mute_ != nullptr) {
     this->speaker_mute_->add_on_state_callback([this](bool muted) {
       this->runtime_->event(muted ? "speaker_muted" : "speaker_unmuted");
@@ -64,3 +69,5 @@ void RuntimeNetworkObservers::on_wifi_connect_state(StringRef ssid, std::span<co
 #endif
 
 }  // namespace esphome::runtime_controller
+
+#endif
