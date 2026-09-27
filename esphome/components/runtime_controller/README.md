@@ -255,6 +255,10 @@ runtime_controller:
     speaker_mute: speaker_mute
 ```
 
+The `observe.voip_stack` value can be left empty to select the single configured
+VoIP stack automatically. An explicit ID remains valid. To disable this observer,
+omit its key entirely; an empty value enables automatic binding.
+
 | Binding | Notifications delivered |
 |---|---|
 | `wifi` | `wifi_connected`, `wifi_disconnected` |

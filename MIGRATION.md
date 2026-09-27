@@ -14,7 +14,7 @@ for users keeping their own YAML.
 
 | Input | What to use | What to remove |
 |---|---|---|
-| VoIP state | `observe.voip_stack: phone` with the full profile, or a custom `voip:` mapping | Manual forwarding of the same call states |
+| VoIP state | `observe.voip_stack:` (automatic) with the full profile, or a custom `voip:` mapping | Manual forwarding of the same call states |
 | Media playback | `observe.media_player: speaker_media_player` | Callbacks that only send `media_playing`, `media_paused`, `media_idle` or `announcement_started` |
 | Wi-Fi | `observe.wifi: true` | Duplicate forwarding of Wi-Fi connect/disconnect events |
 | Mic/speaker mute | The corresponding `observe` switch binding | Duplicate runtime mute events, **not** the action that mutes the hardware |
@@ -39,7 +39,7 @@ configure existing components and scripts; they do not create the hardware.
 | `base.yaml` | Controller `runtime`, base profile rules, initially empty feature selection | No audio or display components |
 | `voice.yaml` | Voice rules and stop/start scripts | `va`, `speaker_media_player`, the Intercom voice/lifecycle globals and `ui_va_barge_start` / `ui_va_end` hooks |
 | `media.yaml` | Media listener and ducking, which lowers music during higher-priority activity | `speaker_media_player`, `media_mixer_input`, `g_ducking_active` |
-| `ringtone.yaml` | Call-state listener and ringtone actions | `phone`, `voip_start_ringtone`, `voip_stop_ringtone` |
+| `ringtone.yaml` | Call-state listener and ringtone actions | One VoIP Stack, `voip_start_ringtone`, `voip_stop_ringtone` |
 | `timers.yaml` | Timer rules and alarm actions | `speaker_media_player`, `timer_alarm_loop`, `timer_alarm_auto_stop` |
 | `display.yaml` | Map display decisions to the UI | `ui_state`, `render_ui_state`, the `ui_state_*` substitutions |
 | `led_state.yaml` | Publish the numeric LED decision | `g_applied_led`; no physical LED required |

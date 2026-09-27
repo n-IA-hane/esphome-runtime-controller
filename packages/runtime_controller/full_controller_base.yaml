@@ -9,7 +9,7 @@ packages:
   runtime_led_state: !include led_state.yaml
 runtime_controller:
   observe:
-    voip_stack: phone
+    voip_stack:  # Resolve the single configured VoIP stack.
     wifi: true
     microphone_mute: mute
     speaker_mute: speaker_mute

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Use automatic VoIP binding in shared runtime packages, removing their
+dependency on a component specifically named `phone`. Explicit IDs remain
+supported for custom configurations.
+
 ## 2026.10.0: more reliable voice controls and simpler YAML packages
 
 Changes since stable **2026.9.2**.

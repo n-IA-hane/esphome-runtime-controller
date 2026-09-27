@@ -1,7 +1,7 @@
 # Optional ringtone policy bindings.
 runtime_controller:
   observe:
-    voip_stack: phone
+    voip_stack:  # Resolve the single configured VoIP stack.
   policies:
     ringtone:
       values:

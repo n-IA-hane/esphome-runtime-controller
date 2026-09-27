@@ -157,7 +157,7 @@ to wait for the next change.
 
 | Input | Connection to the controller |
 |---|---|
-| VoIP call state | `observe.voip_stack` with the built-in profile, or a custom `voip:` mapping |
+| VoIP call state | `observe.voip_stack` with the built-in profile (empty selects the single phone), or a custom `voip:` mapping |
 | Media player | `observe.media_player` |
 | Wi-Fi connection | `observe.wifi: true` |
 | Microphone mute switch | `observe.microphone_mute` |
