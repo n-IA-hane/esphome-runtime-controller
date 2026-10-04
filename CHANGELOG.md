@@ -1,10 +1,30 @@
 # Changelog
 
-## Unreleased
+## 2026.10.1
 
-Use automatic VoIP binding in shared runtime packages, removing their
-dependency on a component specifically named `phone`. Explicit IDs remain
-supported for custom configurations.
+Changes since stable **2026.10.0**.
+
+### 🧩 Your phone no longer needs to be named `phone`
+
+The shared runtime packages now resolve the VoIP component automatically instead
+of requiring its declaration to use `id: phone`.
+
+This removes unnecessary coupling between the packages and the name chosen in a
+firmware YAML. Explicit IDs remain available for custom configurations, and
+lambdas that address a component by name still need that declared ID.
+
+The change covers the full controller's VoIP observer and the shared ringtone
+package. It builds on the component's existing automatic binding.
+
+### 📦 Updating
+
+Refresh the Runtime Controller component and packages from `main`, then rebuild
+your firmware. The coordinated reference profiles use Runtime Controller
+**2026.10.1**, ESP VoIP Stack **2026.10.1**, and Audio Stack **2026.10.2**.
+
+Requires ESPHome **2026.9.0 or newer**.
+
+[Configuration guide](https://github.com/n-IA-hane/esphome-runtime-controller/blob/main/README.md)
 
 ## 2026.10.0: more reliable voice controls and simpler YAML packages
 

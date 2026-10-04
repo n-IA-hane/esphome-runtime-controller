@@ -34,7 +34,7 @@ happening; priorities decide what the LED, display, ringtone and audio controls
 should do. The audio components still own playback and the VoIP component still
 owns calls.
 
-Stable release: [2026.10.0](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.0).
+Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.1).
 Requires ESPHome **2026.9.0 or newer**. See the
 [changes since 2026.9.2](CHANGELOG.md) and [migration guide](MIGRATION.md).
 
@@ -169,6 +169,16 @@ call activity, and the remaining activities determine the output.
 To drive real hardware, replace the log action with your display or LED action.
 Keep that output under the controller's control: a second automation writing to
 the same LED can still overwrite the result.
+
+## Automatic VoIP binding in shared packages
+
+From 2026.10.1, the full controller and ringtone packages use the single VoIP
+component without requiring `id: phone`. You can choose a different ID or omit
+it when no lambda needs to refer to the component by name.
+
+For a custom observer, `voip_stack: {}` under `observe:` selects that same
+instance. Supplying an explicit ID remains supported. This selects an existing
+VoIP component; it does not create another phone.
 
 ## Which components are observed directly?
 
