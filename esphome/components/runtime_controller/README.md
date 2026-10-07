@@ -207,7 +207,10 @@ The renderer consumes the `led_status` policy. Presets are `ws2812_ring`,
 `rgb_single` and `spotpear_rgb`. State overrides accept a supported color name
 or three RGB percentages, a brightness percentage, and an effect name available
 on the target light. Hexadecimal color strings are not accepted. The renderer
-does not define light effects for you.
+does not define light effects for you. If you have problems with effects not 
+showing up correctly, you can try the preset `NONE`. This preset does not 
+apply standard values for any state. Provide your own color, effect and 
+brightness.
 
 ### Shared display script and diagnostic globals
 
