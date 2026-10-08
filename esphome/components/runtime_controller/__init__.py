@@ -122,6 +122,7 @@ COLOR_NAMES = {
 }
 
 LED_PRESETS = {
+    "none": {},
     "ws2812_ring": {
         "idle": {"color": "off", "effect": "None", "brightness": 0.0},
         "muted": {"color": "red", "effect": "Slow Pulse", "brightness": 0.4},

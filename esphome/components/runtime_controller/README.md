@@ -204,10 +204,57 @@ runtime_controller:
 ```
 
 The renderer consumes the `led_status` policy. Presets are `ws2812_ring`,
-`rgb_single` and `spotpear_rgb`. State overrides accept a supported color name
+`rgb_single`, `spotpear_rgb` and `none`. State overrides accept a supported color name
 or three RGB percentages, a brightness percentage, and an effect name available
 on the target light. Hexadecimal color strings are not accepted. The renderer
 does not define light effects for you.
+
+Use `preset: none` when you want only your own LED state mappings. It is
+case-insensitive, so `NONE` is also accepted. Existing presets and their default
+values are unchanged. For example, with a light whose ID is `status_led` and that already
+defines the effect `Custom listening`:
+
+```yaml
+runtime_controller:
+  activities:
+    idle:
+      initial: true
+      policies:
+        led_status: idle
+    listening:
+      priority: 10
+      policies:
+        led_status: listening
+  events:
+    stop_listening:
+      deactivate: [listening]
+  outputs:
+    led:
+      id: status_led
+      preset: none
+      states:
+        idle:
+          color: off
+          brightness: 0%
+          effect: None
+        listening:
+          color: [0%, 100%, 0%]
+          brightness: 30%
+          effect: Custom listening
+```
+
+The automatically generated `listening` event activates that state;
+`stop_listening` returns to the explicit idle mapping. No built-in LED states
+are added by the `none` preset. A state without a mapping logs a warning and
+leaves the previous light state or effect running. If the `led_status` policy
+itself disappears, the existing renderer turns the light off.
+
+Set color and brightness as well as the effect: omitted color defaults to
+`off`, omitted brightness to `0%`, and omitted effect to `None`. Naming an
+effect alone therefore does not turn on the light. This option removes preset
+defaults; it is not a diagnosis or a fix for problems inside a custom effect.
+Thanks to [Gafielt](https://github.com/Gafielt) for proposing it in
+[PR #1](https://github.com/n-IA-hane/esphome-runtime-controller/pull/1).
 
 ### Shared display script and diagnostic globals
 

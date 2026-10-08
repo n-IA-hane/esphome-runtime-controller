@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add the optional `none` LED preset for fully custom state mappings. Existing
+  presets retain their defaults. Unmapped states keep the previous light state;
+  custom effects need explicit color and brightness. Based on
+  [#1](https://github.com/n-IA-hane/esphome-runtime-controller/pull/1).
+
 ## 2026.10.1
 
 Changes since stable **2026.10.0**.
