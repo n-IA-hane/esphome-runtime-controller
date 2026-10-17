@@ -291,7 +291,14 @@ static void test_bounded_actions_and_canonical_names() {
 }
 
 static void test_priorities_groups_and_atomic_updates() {
-  RuntimeController runtime;
+  struct InspectableController : RuntimeController {
+    const char *source(const char *policy) const {
+      for (size_t i = 0; i < this->resolved_policies_.value_count; ++i)
+        if (std::strcmp(this->resolved_policies_.values[i].policy, policy) == 0)
+          return this->resolved_policies_.values[i].source_activity;
+      return nullptr;
+    }
+  } runtime;
   runtime.set_storage_in_psram(false);
   runtime.add_activity("idle", 0, true);
   runtime.add_activity_policy("idle", "phase", "idle");
@@ -315,11 +322,14 @@ static void test_priorities_groups_and_atomic_updates() {
   assert(!runtime.is_activity_active("a"));
   assert(runtime.is_activity_active("b"));
   assert(policy_is(runtime, "phase", "call"));
+  assert(std::strcmp(runtime.source("phase"), "call") == 0);
   assert((outputs == std::vector<int32_t>{0, 1, 9}));
   runtime.set_activity("call", false);
   assert(policy_is(runtime, "phase", "b"));
+  assert(std::strcmp(runtime.source("phase"), "b") == 0);
   runtime.set_activity("b", false);
   assert(policy_is(runtime, "phase", "idle"));
+  assert(std::strcmp(runtime.source("phase"), "idle") == 0);
   assert((outputs == std::vector<int32_t>{0, 1, 9, 2, 0}));
   const uint32_t final_sequence = runtime.get_sequence();
   runtime.set_activity("unknown", true);

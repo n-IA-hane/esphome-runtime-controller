@@ -501,3 +501,16 @@ built-in voice rules and checks schema/listener behavior. It covers nested
 events, complete output publication, queue bounds, allocation failure and voice
 completion in different media states. Real audio, radio behavior and physical
 LED/display output still require device tests.
+
+## Application packages and diagnostic ownership
+
+Maintained Intercom profiles select firmware capabilities with `firmware_features`.
+Their device package selects component bindings and the required rules together.
+The controller's own `features` field selects only built-in rule families; it does
+not create a microphone, player or SIP phone. Custom rule definitions remain
+available for custom applications.
+
+With debug support compiled in, `runtime_controller.dump` prints the source
+activity that won each policy, alongside its value. The resolver records that
+source while choosing the value. Production builds without debug support do not
+store the extra source pointers, and the diagnostic does not add polling.

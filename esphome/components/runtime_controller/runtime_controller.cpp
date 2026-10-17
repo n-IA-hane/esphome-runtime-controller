@@ -601,8 +601,10 @@ void RuntimeController::dump_state(const char *reason) {
   }
   for (size_t i = 0; i < this->resolved_policies_.value_count; i++) {
     const auto &policy = this->resolved_policies_.values[i];
-    ESP_LOGI(TAG, "  policy %s=%s output=%" PRId32, policy.policy != nullptr ? policy.policy : "-",
-             policy.value != nullptr ? policy.value : "-", this->resolve_policy_output_(policy.policy, policy.value));
+    ESP_LOGI(TAG, "  policy %s=%s source=%s output=%" PRId32, policy.policy != nullptr ? policy.policy : "-",
+             policy.value != nullptr ? policy.value : "-",
+             policy.source_activity != nullptr ? policy.source_activity : "-",
+             this->resolve_policy_output_(policy.policy, policy.value));
   }
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
   if (this->voip_ != nullptr) {
@@ -707,6 +709,9 @@ void RuntimeController::apply_generic_outputs_() {
     const char *policy{nullptr};
     const char *value{nullptr};
     int16_t priority{-32768};
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
+    const char *source_activity{nullptr};
+#endif
   };
 
   ResolvedPolicies output;
@@ -740,6 +745,9 @@ void RuntimeController::apply_generic_outputs_() {
       if (activity.priority >= winner->priority) {
         winner->priority = activity.priority;
         winner->value = candidate.value;
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
+        winner->source_activity = activity.name;
+#endif
       }
     }
   }
@@ -748,6 +756,9 @@ void RuntimeController::apply_generic_outputs_() {
   for (size_t i = 0; i < winner_count; i++) {
     output.values[i].policy = winners[i].policy;
     output.values[i].value = winners[i].value;
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
+    output.values[i].source_activity = winners[i].source_activity;
+#endif
   }
 
   this->generic_activity_mask_ = output.mask;

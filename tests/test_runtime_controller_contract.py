@@ -219,7 +219,8 @@ def test_manual_stop_blocks_restart_until_va_end() -> None:
         package = (ROOT / "packages" / "runtime_controller" / package_name).read_text(
             encoding="utf-8"
         )
-        assert package.count("event: va_stop_complete") == 2
+        assert "github://n-IA-hane/esphome-intercom/packages/features/voice/runtime.yaml@dev" in package
+        assert "runtime_voice_transition" not in package  # No second adapter implementation.
 
 
 def test_remote_ringing_keeps_outgoing_call_outputs_active() -> None:

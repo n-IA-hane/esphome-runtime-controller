@@ -13,9 +13,15 @@ struct PolicyValue {
   const char *value{nullptr};
 };
 
+struct ResolvedPolicyValue : PolicyValue {
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
+  const char *source_activity{nullptr};
+#endif
+};
+
 struct ResolvedPolicies {
   uint32_t mask{0};
-  PolicyValue values[MAX_POLICIES]{};
+  ResolvedPolicyValue values[MAX_POLICIES]{};
   size_t value_count{0};
 };
 

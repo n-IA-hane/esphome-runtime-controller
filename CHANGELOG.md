@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 2026.10.2-dev
+
+- Share application bindings with the coordinated Intercom device packages.
+  Maintained devices select whole functions with `firmware_features`; legacy
+  adapters remain available with their documented prerequisites.
+- Show which activity selected each policy in optional debug state dumps, using
+  the existing resolver. The normal runtime keeps its existing ownership model.
+- Explain the reducer through music/call examples and progressively introduce
+  custom observers, priorities and outputs.
+- Use this preview with the matching Intercom `dev` packages. Start from an
+  updated board YAML when migrating an older FULL composition.
 
 - Add the optional `none` LED preset for fully custom state mappings. Existing
   presets retain their defaults. Unmapped states keep the previous light state;

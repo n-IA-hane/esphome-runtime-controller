@@ -21,6 +21,8 @@ Even a small contribution helps cover the real costs of keeping the project acti
 
 # ESPHome Runtime Controller
 
+[Development preview 2026.10.2-dev](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.2-dev) uses the coordinated `dev` sources.
+
 Runtime Controller coordinates the visible state and shared controls of an
 ESPHome device that combines music, Voice Assistant, calls and timers.
 
@@ -38,13 +40,28 @@ Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-runtime-control
 Requires ESPHome **2026.9.0 or newer**. See the
 [changes since 2026.9.2](CHANGELOG.md) and [migration guide](MIGRATION.md).
 
+## Choose how far you need to go
+
+| Your situation | Read next | What you change |
+| --- | --- | --- |
+| You want a working voice/intercom device | [Maintained profiles](#start-with-a-maintained-device-profile) | The board's feature list; its runtime rules are already supplied |
+| You want to understand the reducer | [Music interrupted by a call](#what-happens-when-a-call-interrupts-music), then [the button exercise](#a-small-example-you-can-try) | On a separate test configuration, simulate events and observe which activity wins |
+| You already have a player and LED | [Connect an existing player](#connect-an-existing-media-player-without-forwarding-callbacks) | Observe real inputs and connect one output |
+| You are composing a custom voice/call device | [Feature and adapter selection](#choosing-only-the-features-you-need) | Choose rules, provide their components and attach each adapter once |
+| You need different priorities or custom output behavior | [The YAML reference](esphome/components/runtime_controller/README.md) | Change a policy or event and check the resulting activity sequence |
+
+The small examples teach coordination. They are alternatives to a maintained
+controller configuration, not blocks to paste alongside its existing controller.
+You can use the maintained firmware without learning the reducer implementation.
+
 ## Start with a maintained device profile
 
 For a complete intercom or voice device, start from an
 [Intercom YAML profile](https://github.com/n-IA-hane/esphome-intercom/tree/main/yamls).
 It supplies the microphone, speaker, runtime packages and board-specific wiring.
 
-For your own controller, load the component:
+For your own controller, load the component below. A maintained device package
+already loads it; do not add a duplicate source or controller there.
 
 ```yaml
 external_components:
@@ -52,18 +69,52 @@ external_components:
     components: [runtime_controller]
 ```
 
-The full runtime preset is available as a package:
+For a maintained Intercom device, edit the existing `firmware_features` list in
+its YAML. Its device package selects the required runtime bindings together with
+the components and controls. You do not need to write activities, priorities or
+voice stop/restart scripts yourself.
 
 ```yaml
-packages:
-  runtime_controller: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/full_controller.yaml@main
+substitutions:
+  firmware_features: [voice, wake_word, voip, music, timers, status_led]
 ```
 
-That package expects the component IDs and supporting scripts used by the
-Intercom full profiles. It does not create a microphone, speaker, media player
-or phone. For a custom device, read [package requirements](MIGRATION.md#choose-packages)
-before including it. Use `full_controller_no_led.yaml` when there is no physical
-status LED; its other dependencies are the same.
+Keep the other substitutions and the device package from that board's YAML.
+Removing `voip` also removes the phone input, phone controls and its UI bindings.
+Removing `music` leaves announcement playback available for voice replies and
+ringtones. The [Intercom package guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/README.md)
+contains the complete selection table.
+
+The feature-list layout is available in the coordinated Intercom development
+preview. Use its matching `dev` sources; older stable device YAMLs can still use
+the previous composition. The
+[device migration checklist](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
+explains what to carry over from an existing installation.
+
+The older `packages/runtime_controller/full_controller.yaml` and individual
+adapter paths remain compatibility entrypoints. Their application bindings now
+have one implementation in Intercom. They still require the component IDs and
+helpers documented in the [migration guide](MIGRATION.md#choose-packages).
+Do not add a legacy full preset on top of a new device package.
+
+## What happens when a call interrupts music
+
+| Moment | Facts kept by the controller | Result |
+| --- | --- | --- |
+| Music starts | Music is active | Media indication, normal music level |
+| A call arrives | Music is still active; the phone is ringing | Call indication and ringtone, music is attenuated |
+| The call is answered | Music is still active; the phone is in a call | Call indication, no ringtone, music remains attenuated |
+| The call ends | Music remains active | Media indication and normal music level return |
+
+The controller does not receive RTP or decode audio. It selects the requested
+outputs and invokes the existing component actions. The media player owns its
+streams; VoIP Stack owns the call. A higher-priority indication does not erase
+background activity.
+
+Most of a display YAML describes pins, fonts, pictures and geometry. A reducer
+cannot remove those definitions. The device packages remove repeated wiring from
+the user-facing YAML, while the coordinator removes conflicting decisions from
+callbacks. These solve different parts of the original complexity.
 
 ## Four terms used in the YAML
 
@@ -280,11 +331,15 @@ and the maintained voice/intercom rules below.
 
 ## Choosing only the features you need
 
-The runtime packages are split into controller, voice, media, timer, ringtone,
-display and LED configuration. For example, a voice-only device does not need the
-ringtone adapter, and a device without a display does not need the display
-adapter. The packages refer to existing component IDs and scripts; they do not
-create all of their dependencies automatically.
+For a maintained Intercom device, choose the application in `firmware_features`.
+The device package selects its runtime bindings for you. To remove telephone
+functionality, remove `voip` there; changing an internal runtime rule alone does
+not remove the SIP component.
+
+For a custom or legacy composition, runtime packages are split into controller,
+voice, media, timer, ringtone, display and LED configuration. For example, a
+voice-only device does not need the ringtone adapter. These low-level adapters
+refer to existing component IDs and scripts; they do not create all dependencies.
 
 The built-in `full_voice_voip` profile supplies the activity rules. Its `features`
 setting selects the voice, media and timer rule sets. Selecting a rule set and
@@ -314,10 +369,11 @@ The firmware only includes the optional connections selected in its YAML:
 | All Wi-Fi/media/mute observations | The observer component itself |
 
 The controller does not import LVGL or a display driver. Those are supplied by
-other YAML components only when the device uses them. A `display.yaml` adapter
-connects decisions to your existing display script; leave it out on a device
-without that UI. The full preset deliberately includes all its adapters, so use
-`base.yaml` plus selected adapters for a smaller device.
+other YAML components only when the device uses them. In a maintained device,
+removing `display` from `firmware_features` removes its presentation bindings.
+In a custom composition, leave out the `display.yaml` adapter when there is no
+display script to call. Legacy full presets deliberately include all their
+adapters; custom builds can use `base.yaml` plus selected adapters instead.
 
 The generic reducer still needs its common rule tables and queues. Their
 capacity is fixed; selecting fewer profile rules does not resize every common
@@ -369,7 +425,9 @@ button:
           reason: manual_check
 ```
 
-The log lists active activities and the winning value for each policy. If the
+The log lists active activities and, for each policy, its value and the activity
+that selected it (`source=...`). This source is recorded by the existing resolver,
+not recomputed by a second diagnostic state machine. If the
 LED stays in a call state, first check whether the call activity is still active.
 If the resolved policy is already idle, inspect the LED automation instead.
 For a stuck response, check the voice completion and media events together.

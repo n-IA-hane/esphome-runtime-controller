@@ -31,8 +31,11 @@ a call. Only remove duplicate forwarding or competing output writers.
 
 ## Choose packages
 
-These files are under `packages/runtime_controller/` in this repository. They
-configure existing components and scripts; they do not create the hardware.
+These compatibility entrypoints remain under `packages/runtime_controller/`.
+They now load the canonical application bindings from Intercom, preserving their
+existing IDs and prerequisites. New maintained devices use a single device package
+and `firmware_features` instead of assembling these fragments by hand. The
+controller component itself remains in this repository.
 
 | Package | Adds | Required bindings or helpers |
 |---|---|---|
