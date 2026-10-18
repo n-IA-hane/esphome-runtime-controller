@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 secrets.yaml
 .DS_Store
+test-results/
