@@ -156,6 +156,36 @@ void RuntimeController::dump_config() {
 
 void RuntimeController::mark_config_error_() { this->config_error_ = true; }
 
+void RuntimeController::observe_event(const char *name) {
+  if (!this->allocate_storage_())
+    return;
+  if (this->pending_event_count_ == this->storage_->pending_events.size() && !this->dispatching_)
+    this->drain_pending_events_();
+  (void) this->enqueue_event_(name);
+}
+
+void RuntimeController::observe_activity(const char *name, bool active) {
+  if (!this->allocate_storage_())
+    return;
+  if (this->pending_event_count_ == this->storage_->pending_events.size() && !this->dispatching_)
+    this->drain_pending_events_();
+  (void) this->enqueue_activity_update_(name, active);
+}
+
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
+void RuntimeController::set_activity_presentation_priority(const char *activity, int16_t priority) {
+  if (!this->allocate_storage_())
+    return;
+  int index = this->find_activity_(activity);
+  if (index < 0) {
+    this->mark_config_error_();
+    return;
+  }
+  this->storage_->presentation_priorities[index] = priority;
+  this->presentation_priority_mask_ |= this->storage_->activities[index].bit;
+}
+#endif
+
 void RuntimeController::add_activity(const char *name, int16_t priority, bool initial) {
   if (!this->allocate_storage_())
     return;
@@ -742,8 +772,15 @@ void RuntimeController::apply_generic_outputs_() {
         winner = &winners[winner_count++];
         winner->policy = candidate.policy;
       }
-      if (activity.priority >= winner->priority) {
-        winner->priority = activity.priority;
+      int16_t priority = activity.priority;
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
+      if ((this->presentation_priority_mask_ & activity.bit) != 0 &&
+          (str_eq(candidate.policy, "presentation") || str_eq(candidate.policy, "led_status") ||
+           str_eq(candidate.policy, "display_status")))
+        priority = this->storage_->presentation_priorities[i];
+#endif
+      if (priority >= winner->priority) {
+        winner->priority = priority;
         winner->value = candidate.value;
 #ifdef USE_RUNTIME_CONTROLLER_DEBUG
         winner->source_activity = activity.name;
@@ -888,7 +925,13 @@ bool RuntimeController::sync_voip_activity_(uint8_t index) {
 #endif
 
 void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies, const ResolvedPolicies &new_policies) {
-  auto apply_change = [this](const char *policy, const char *value) {
+  auto apply_change = [this, &old_policies](const char *policy, const char *value) {
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_TRIGGER
+    if (str_eq(policy, "presentation") && this->presentation_trigger_ != nullptr) {
+      const char *previous = find_policy_value(old_policies, policy, "");
+      this->presentation_trigger_->trigger(previous, value != nullptr ? value : "");
+    }
+#endif
 #ifdef USE_RUNTIME_CONTROLLER_LED
     if (str_eq(policy, "led_status"))
       this->apply_led_state_(value);

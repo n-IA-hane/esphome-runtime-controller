@@ -1,7 +1,7 @@
 # Runtime Controller YAML reference
 
 Start with the [practical guide](../../../README.md) for an introduction and a
-working button-driven example. This reference explains configuration fragments
+small observer/trigger example. This reference explains configuration fragments
 that you merge into a device YAML. IDs such as `phone`, `speaker_media_player`
 and `status_led` refer to components you must supply.
 
@@ -14,8 +14,8 @@ Requires ESPHome 2026.9.0 or newer for the maintained packages.
 | `id` | Generated | Use an explicit ID, such as `runtime`, when sending actions. |
 | `debug` | `false` | Compile detailed event and state logging. Required for detailed dumps. |
 | `storage_in_psram` | `false` | Put the controller's fixed tables and queues in PSRAM. Requires `psram:`. |
-| `profile` | None | `full_voice_voip` supplies rules for the maintained voice/intercom devices. |
-| `features` | All three when omitted with the profile | Select `voice_assistant`, `media_player`, `timers`, or `[]`. Valid only with `full_voice_voip`. |
+| `profile` | Inferred `presentation` for a simple observer-only configuration | `presentation` supplies observation rules; `full_voice_voip` retains the maintained coordination rules. Explicit custom graphs remain supported. |
+| `features` | Inferred from observers in `presentation`; all three in `full_voice_voip` | Select voice, playback and timer rules. Full packages continue to supply their required actions. |
 | `activities` | `{}` | Facts, priorities and desired policy values. |
 | `groups` | `{}` | Lists of activities that cannot be active together. |
 | `derived_activities` | `[]` | Activities calculated from other activities. |
@@ -25,13 +25,70 @@ Requires ESPHome 2026.9.0 or newer for the maintained packages.
 | `policies` | `{}` | Map resolved policy values to globals and automations. |
 | `observe` | `{}` | Connect existing components to the controller. See below. |
 | `voip` | None | Custom mapping from SIP call states to activities, instead of the profile's mapping. |
-| `outputs.led` | None | Render the `led_status` policy on a light. |
+| `outputs.led` | None | Compatible preset renderer for `led_status`. Natural triggers can instead call ordinary light/display actions. |
+| `presentation.priorities` | Existing priorities | Optional priorities by presentation name, affecting presentation/LED/display only. |
+| `on_<state>` | None | Run an ordinary ESPHome automation when that presentation becomes selected. |
+| `on_state_change` | None | Automation with string arguments `previous` and `current`. |
 | `output_script` | None | Run an existing parameterless script after a committed change. |
-| `state_outputs` | `{}` | Expose the activity bitmask and sequence number through globals. |
+| `state_outputs` | `{}` | Read-only global projections: `activity_mask`, `sequence`, and optional `api_clients` (requires `observe.api`). |
 
 The profile is a set of rules, not a hardware preset. Enabling voice rules does
 not create Voice Assistant, its microphone or its action scripts. The
 [package guide](../../../MIGRATION.md#choose-packages) lists those requirements.
+
+## Natural presentation triggers
+
+With existing sources declared under `observe`, a configuration without an
+explicit graph uses the `presentation` profile. Activities and lifecycle event
+mapping are supplied automatically; no audio/control commands are requested.
+
+| Triggers | Selected presentation |
+|---|---|
+| `on_idle`, `on_music`, `on_announcement` | Idle, music or the player's announcement state |
+| `on_ringing`, `on_calling`, `on_remote_ringing`, `on_call` | Incoming ring, outbound setup, remote ringing, established call |
+| `on_wake`, `on_listening`, `on_thinking`, `on_responding`, `on_error` | Assistant phases available in the configured profile |
+| `on_timer` | Timer alarm, not merely the existence of a timer |
+| `on_no_wifi`, `on_no_ha`, `on_no_va` | Connectivity/availability of observed sources |
+| `on_mic_muted`, `on_speaker_muted`, `on_muted` | One or both observed mute switches |
+| `on_boot` | Boot activity when explicitly provided by the Full/custom profile |
+
+Use the ordinary `then:` action syntax. Effects must already exist on the light;
+the light owns their execution. A state that has no observed/configured producer
+is rejected. Define `on_idle` if the output must clear when the activity ends.
+
+```yaml
+runtime_controller:
+  observe:
+    media_player: player
+  presentation:
+    priorities:
+      music: 50
+  on_music:
+    then:
+      - light.turn_on:
+          id: status_led
+          effect: Pulse
+  on_idle:
+    then:
+      - light.turn_off: status_led
+  on_state_change:
+    then:
+      - logger.log:
+          format: "%s -> %s"
+          args: [previous.c_str(), current.c_str()]
+```
+
+A trigger fires on a change of selected presentation, not every source update.
+Music becomes selected again after a higher-priority call ends even when the
+player has not restarted. Priority overrides do not affect ducking or voice/call
+control. Equal-priority ordering remains the existing declaration-order rule.
+
+The shorthand uses the existing policy-value actions, not another state machine.
+Do not configure both `on_music` and an advanced `policies.presentation.values.music`
+handler. `on_state_change` runs before the selected state's named automation.
+Actions keep normal ESPHome delay/script semantics; explicitly stop long-running
+user scripts where needed. Raw source actions remain available through the
+source component or `events.<event>.then` in a custom graph.
 
 ## Activities and priorities
 
@@ -297,6 +354,10 @@ runtime_controller:
   observe:
     voip_stack: phone
     media_player: speaker_media_player
+    voice_assistant: va
+    micro_wake_word: mww
+    timers: va
+    api: true
     wifi: true
     microphone_mute: mute
     speaker_mute: speaker_mute
@@ -313,19 +374,31 @@ omit its key entirely; an empty value enables automatic binding.
 | `microphone_mute` | `mic_muted`, `mic_unmuted` |
 | `speaker_mute` | `speaker_muted`, `speaker_unmuted` |
 | `voip_stack` | Synchronizes the profile's `voip:<state>` activities |
+| `voice_assistant` | Official VA start/listening/STT/TTS/end/error/client triggers |
+| `micro_wake_word` | Official wake-word detection trigger |
+| `timers` | Started/cancelled/finished events plus the existing VA timer collection |
+| `api` | Filtered API client presence, with 250 ms disconnect grace |
 
 Media states `NONE`, `IDLE`, `OFF` and `ON` map to `media_idle`. Switch on means
 muted. These listeners read the initial state and preserve other component
 callbacks. They do not execute hardware mute operations.
 
-The full profile provides the corresponding event rules. If you use Wi-Fi,
-media or mute observation in a custom controller, define those event names
-under `events:` yourself. Unknown events produce warnings.
+The presentation and Full profiles provide event rules. A fully custom graph
+continues to provide its own rules. Unknown events produce warnings.
 
-Voice Assistant and Micro Wake Word use their official ESPHome callbacks via
-shared Intercom packages. Neither `observe.voice_assistant` nor
-`observe.micro_wake_word` is supported. HA API presence also uses the shared
-Intercom callbacks; Wi-Fi connection alone does not mean HA is connected.
+Voice, wake-word, timer and API adapters compose one validated observer action
+into the source's existing automation chain. They preserve user actions and
+delays, rather than replacing the trigger's Automation parent. The observation
+is queued in the existing reducer so synchronous text/keyword updates complete
+first. Duplicate manual forwarding to that same controller is rejected.
+
+API presence retains the existing diagnostic-client filter and reconnect grace.
+It also reports initial absence after the grace interval. Public idle, connection
+and timer state are replayed at setup; unobservable active VA phases and previous
+wake-word detections are not invented. Timer lists remain owned by VA.
+
+VoIP-only maintained firmware uses direct VoIP Stack callbacks, without this
+controller. Selecting an observer does not add or configure its source component.
 
 ### Custom VoIP state mapping
 
@@ -390,7 +463,7 @@ a voice phase can temporarily take over the display during an established call;
 it does not terminate the call. Custom priorities should be chosen per output,
 with explicit idle/stop values for ongoing effects.
 
-Use the maintained callback packages to deliver voice, timer and HA connection
+Use the automatic source observers to deliver voice, timer and HA connection
 events. The complete built-in event definitions are in
 [`__init__.py`](__init__.py), under `FULL_VOICE_VOIP_EVENTS`; the package
 [selection guide](../../../MIGRATION.md#choose-packages) explains how to connect

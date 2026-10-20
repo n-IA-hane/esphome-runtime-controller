@@ -1,6 +1,10 @@
+from copy import deepcopy
+
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
+from esphome.core import Lambda
 from esphome.components import (
     globals as globals_component,
     light,
@@ -19,6 +23,11 @@ RuntimeController = runtime_controller_ns.class_("RuntimeController", cg.Compone
 RuntimeNetworkObservers = runtime_controller_ns.class_(
     "RuntimeNetworkObservers", cg.Component
 )
+SourceEventAction = runtime_controller_ns.class_(
+    "SourceEventAction", automation.Action, cg.Parented.template(RuntimeNetworkObservers)
+)
+VoiceAssistant = cg.esphome_ns.namespace("voice_assistant").class_("VoiceAssistant", cg.Component)
+MicroWakeWord = cg.esphome_ns.namespace("micro_wake_word").class_("MicroWakeWord", cg.Component)
 VoipStack = cg.esphome_ns.namespace("voip_stack").class_("VoipStack", cg.Component)
 EventAction = runtime_controller_ns.class_(
     "EventAction", automation.Action, cg.Parented.template(RuntimeController)
@@ -97,8 +106,42 @@ CONF_PRESET = "preset"
 CONF_COLOR = "color"
 CONF_EFFECT = "effect"
 CONF_BRIGHTNESS = "brightness"
+CONF_TIMERS = "timers"
+CONF_API = "api"
+CONF_OBSERVER_BINDINGS = "_observer_bindings"
 
 PROFILE_FULL_VOICE_VOIP = "full_voice_voip"
+PROFILE_PRESENTATION = "presentation"
+CONF_PRESENTATION = "presentation"
+CONF_PRIORITIES = "priorities"
+
+PRESENTATION_NAMES = (
+    "idle", "music", "announcement", "ringing", "calling", "remote_ringing",
+    "call", "wake", "listening", "thinking", "responding", "timer", "error",
+    "boot", "no_wifi", "no_ha", "no_va", "muted", "mic_muted", "speaker_muted",
+)
+PRESENTATION_ALIASES = {
+    "media": "music", "voip_ringing": "ringing", "voip_calling": "calling",
+    "voip_remote_ringing": "remote_ringing", "voip_in_call": "call",
+    "timer_ringing": "timer",
+}
+
+# Public ESPHome trigger names and the existing reducer events they represent.
+SOURCE_HOOKS = {
+    CONF_VOICE_ASSISTANT: {
+        "on_start": "va_start", "on_listening": "va_listening",
+        "on_stt_vad_end": "va_thinking", "on_intent_progress": "va_responding",
+        "on_tts_start": "va_responding", "on_end": "va_end", "on_idle": "va_idle",
+        "on_error": "va_error", "on_client_connected": "va_client_connected",
+        "on_client_disconnected": "va_client_disconnected",
+    },
+    CONF_MICRO_WAKE_WORD: {"on_wake_word_detected": "wake_word"},
+    CONF_TIMERS: {
+        "on_timer_started": "timer_started", "on_timer_cancelled": "timer_cancelled",
+        "on_timer_finished": "timer_finished", "on_timer_updated": "timer_updated",
+    },
+    CONF_API: {"on_client_connected": "api_connected", "on_client_disconnected": "api_disconnected"},
+}
 
 LED_POLICY = "led_status"
 
@@ -903,10 +946,169 @@ def _selected_profile(config):
     return activities, groups, list(FULL_VOICE_VOIP_DERIVED), events
 
 
+def _prepare_presentation(config):
+    """Expand natural triggers into existing policy actions before validation."""
+    if not isinstance(config, dict):
+        return config
+    config = deepcopy(config)
+    triggers = {name: config.pop(f"on_{name}") for name in PRESENTATION_NAMES
+                if f"on_{name}" in config}
+    if triggers:
+        policy = config.setdefault(CONF_POLICIES, {}).setdefault(CONF_PRESENTATION, {})
+        values = policy.setdefault(CONF_VALUES, {})
+        for name, actions in triggers.items():
+            if name in values:
+                raise cv.Invalid(f"Duplicate presentation binding for {name}")
+            values[name] = actions
+        config.setdefault(CONF_PRESENTATION, {})
+    if "on_state_change" in config:
+        presentation = config.setdefault(CONF_PRESENTATION, {})
+        if CONF_ON_CHANGE in presentation:
+            raise cv.Invalid("Duplicate presentation on_state_change binding")
+        presentation[CONF_ON_CHANGE] = config.pop("on_state_change")
+    if (CONF_PROFILE not in config and config.get(CONF_OBSERVE)
+            and not any(config.get(key) for key in (
+                CONF_ACTIVITIES, CONF_GROUPS, CONF_DERIVED_ACTIVITIES, CONF_EVENTS,
+            ))):
+        config[CONF_PROFILE] = PROFILE_PRESENTATION
+    if config.get(CONF_PROFILE) == PROFILE_PRESENTATION and CONF_FEATURES not in config:
+        observed = config.get(CONF_OBSERVE, {})
+        config[CONF_FEATURES] = [name for name in PROFILE_FEATURES if observed.get(name)]
+    bindings = []
+    for source, hooks in SOURCE_HOOKS.items():
+        if not config.get(CONF_OBSERVE, {}).get(source):
+            continue
+        for hook, event in hooks.items():
+            action = {"event": event}
+            if source == CONF_API:
+                action["text"] = Lambda("return client_info;")
+            elif source == CONF_TIMERS:
+                action["text"] = Lambda("return timer.id;")
+            if hook == "on_intent_progress":
+                action["enabled"] = Lambda("return !x.empty();")
+            bindings.append({"source": source, "hook": hook,
+                             "automation": {CONF_THEN: [{"runtime_controller.source_event": action}]}})
+    if bindings:
+        config[CONF_OBSERVER_BINDINGS] = bindings
+    return config
+
+
+def _attach_source_observers(config):
+    """Compose validated actions into one official Automation per source trigger.
+
+    IDs are reserved and resolved in this component's schema before final
+    validation. Source codegen then builds the combined chain exactly once.
+    """
+    full = fv.full_config.get()
+    attachments = full.data.setdefault("runtime_controller.observer_bindings", set())
+    observed = config[CONF_OBSERVE]
+    if observed.get(CONF_WIFI) and CONF_WIFI not in full:
+        raise cv.Invalid("observe.wifi requires the wifi component")
+    if (observed.get(CONF_VOICE_ASSISTANT) and observed.get(CONF_TIMERS)
+            and observed[CONF_VOICE_ASSISTANT] != observed[CONF_TIMERS]):
+        raise cv.Invalid("Voice Assistant and timer observers must refer to the same component")
+    if config[CONF_STATE_OUTPUTS].get("api_clients") and not observed.get(CONF_API):
+        raise cv.Invalid("state_outputs.api_clients requires observe.api")
+    for binding in config.pop(CONF_OBSERVER_BINDINGS, []):
+        source, hook = binding["source"], binding["hook"]
+        if source == CONF_API:
+            if CONF_API not in full:
+                raise cv.Invalid("observe.api requires the api component")
+            target = full[CONF_API]
+        else:
+            path = full.get_path_for_id(observed[source])[:-1]
+            target = full.get_config_for_path(path)
+        key = (str(config[CONF_ID]), source, hook)
+        if key in attachments:
+            continue
+        addition = binding["automation"]
+        if hook in target:
+            expected = SOURCE_HOOKS[source][hook]
+            existing = [item.get("runtime_controller.source_event") for item in target[hook][CONF_THEN]]
+            if any(isinstance(item, dict) and item.get(CONF_EVENT) == expected
+                   and str(item.get(CONF_ID)) == str(config["observers_id"]) for item in existing):
+                attachments.add(key)
+                continue
+            for item in target[hook][CONF_THEN]:
+                forwarded = item.get("runtime_controller.event")
+                if (isinstance(forwarded, dict)
+                        and str(forwarded.get(CONF_ID)) == str(config[CONF_ID])
+                        and forwarded.get(CONF_EVENT) == expected):
+                    raise cv.Invalid(
+                        f"{source}.{hook} already forwards {expected}; remove that forwarding "
+                        f"when enabling observe.{source}"
+                    )
+            target[hook][CONF_THEN] = addition[CONF_THEN] + target[hook][CONF_THEN]
+        else:
+            target[hook] = addition
+        attachments.add(key)
+    return config
+
+
+def _has_presentation(config):
+    return config.get(CONF_PROFILE) == PROFILE_PRESENTATION or CONF_PRESENTATION in config
+
+
+def _with_presentation(activities, *, simple=False):
+    result = deepcopy(activities)
+    for name, activity in result.items():
+        policies = activity.setdefault(CONF_POLICIES, {})
+        value = policies.get(LED_POLICY)
+        if value is not None:
+            policies[CONF_PRESENTATION] = (
+                "announcement" if name == "announcement"
+                else PRESENTATION_ALIASES.get(value, value)
+            )
+        if simple:
+            activity[CONF_POLICIES] = {
+                key: value for key, value in policies.items()
+                if key in (CONF_PRESENTATION, LED_POLICY, "display_status")
+            }
+    return result
+
+
+def _presentation_profile(config):
+    """Observe facts without requesting voice/media control operations."""
+    activities, groups, derived, events = _selected_profile(config)
+    observed = config[CONF_OBSERVE]
+    remove = {"boot"}
+    for source, activity in ((CONF_WIFI, "no_wifi"), ("api", "no_ha"),
+                             (CONF_MICROPHONE_MUTE, "mic_muted"),
+                             (CONF_SPEAKER_MUTE, "speaker_muted")):
+        if not observed.get(source):
+            remove.add(activity)
+    if not (observed.get(CONF_MICROPHONE_MUTE) and observed.get(CONF_SPEAKER_MUTE)):
+        remove.add("both_muted")
+    activities = {k: v for k, v in activities.items() if k not in remove}
+    names = set(activities)
+    groups = {k: [v for v in values if v in names] for k, values in groups.items()}
+    derived = [v for v in derived if v[CONF_NAME] in names]
+    filtered = {}
+    for name, event in events.items():
+        if name in ("wake_word", "manual_voice_toggle", "voice_stop", "voice_quiet"):
+            continue
+        event = deepcopy(event)
+        for rule in [event, *event.get(CONF_CASES, [])]:
+            rule.pop(CONF_ACTION, None)
+            for key in (CONF_ANY, CONF_ALL, CONF_NONE, CONF_ACTIVATE, CONF_DEACTIVATE):
+                if key in rule:
+                    rule[key] = [v for v in _as_list(rule[key]) if v in names]
+        filtered[name] = event
+    return _with_presentation(activities, simple=True), groups, derived, filtered
+
+
+def _voip_states(config):
+    if _has_presentation(config):
+        return _with_presentation(FULL_VOICE_VOIP_VOIP_STATES,
+                                  simple=config.get(CONF_PROFILE) == PROFILE_PRESENTATION)
+    return FULL_VOICE_VOIP_VOIP_STATES
+
+
 def _merged_runtime_config(config):
-    profile_full = config.get(CONF_PROFILE) == PROFILE_FULL_VOICE_VOIP
+    profile_full = config.get(CONF_PROFILE) in (PROFILE_FULL_VOICE_VOIP, PROFILE_PRESENTATION)
     base_activities, base_groups, base_derived, base_events = (
-        _selected_profile(config) if profile_full else ({}, {}, [], {})
+        _presentation_profile(config) if config.get(CONF_PROFILE) == PROFILE_PRESENTATION
+        else _selected_profile(config) if profile_full else ({}, {}, [], {})
     )
     activities = dict(base_activities)
     activities.update(config[CONF_ACTIVITIES])
@@ -916,6 +1118,8 @@ def _merged_runtime_config(config):
     derived = list(base_derived) + list(config[CONF_DERIVED_ACTIVITIES])
     events = dict(base_events)
     events.update(config[CONF_EVENTS])
+    if _has_presentation(config):
+        activities = _with_presentation(activities)
     return profile_full, activities, groups, derived, events
 
 
@@ -1141,7 +1345,7 @@ def _validate_runtime_controller(config):
 
     all_activity_configs = list(activities.values())
     if profile_full and CONF_VOIP_STACK in config[CONF_OBSERVE]:
-        all_activity_configs.extend(FULL_VOICE_VOIP_VOIP_STATES.values())
+        all_activity_configs.extend(_voip_states(config).values())
     if CONF_VOIP in config:
         all_activity_configs.extend(config[CONF_VOIP][CONF_STATES].values())
     policy_names: set[str] = set()
@@ -1166,6 +1370,14 @@ def _validate_runtime_controller(config):
         )
 
     configured_policies = config[CONF_POLICIES]
+    if _has_presentation(config):
+        available = {item.get(CONF_POLICIES, {}).get(CONF_PRESENTATION) for item in all_activity_configs}
+        requested = set(config.get(CONF_PRESENTATION, {}).get(CONF_PRIORITIES, {}))
+        requested.update(configured_policies.get(CONF_PRESENTATION, {}).get(CONF_VALUES, {}))
+        missing = requested - available
+        if missing:
+            raise cv.Invalid("Presentation states have no observed or configured activity: "
+                             + ", ".join(sorted(missing)))
     if any(not policy.strip() for policy in configured_policies):
         raise cv.Invalid("runtime_controller configured policy names must not be empty")
     if any(
@@ -1221,6 +1433,7 @@ def _validate_runtime_controller(config):
 
 
 CONFIG_SCHEMA = cv.All(
+    _prepare_presentation,
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(RuntimeController),
@@ -1229,17 +1442,32 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(
                 CONF_STORAGE_IN_PSRAM, default=False
             ): _validate_storage_in_psram,
-            cv.Optional(CONF_PROFILE): cv.one_of(PROFILE_FULL_VOICE_VOIP, lower=True),
+            cv.Optional(CONF_PROFILE): cv.one_of(PROFILE_FULL_VOICE_VOIP, PROFILE_PRESENTATION, lower=True),
+            cv.Optional(CONF_PRESENTATION): cv.Schema({
+                cv.Optional(CONF_PRIORITIES, default={}): cv.Schema({
+                    cv.one_of(*PRESENTATION_NAMES): cv.int_range(min=-32768, max=32767),
+                }),
+                cv.Optional(CONF_ON_CHANGE): ACTION_TRIGGER_SCHEMA,
+            }),
             cv.Optional(CONF_FEATURES): cv.ensure_list(cv.one_of(*PROFILE_FEATURES)),
             cv.Optional(CONF_OBSERVE, default={}): cv.Schema(
                 {
                     cv.Optional(CONF_VOIP_STACK): cv.use_id(VoipStack),
                     cv.Optional(CONF_MEDIA_PLAYER): cv.use_id(media_player.MediaPlayer),
+                    cv.Optional(CONF_VOICE_ASSISTANT): cv.use_id(VoiceAssistant),
+                    cv.Optional(CONF_MICRO_WAKE_WORD): cv.use_id(MicroWakeWord),
+                    cv.Optional(CONF_TIMERS): cv.use_id(VoiceAssistant),
+                    cv.Optional(CONF_API, default=False): cv.boolean,
                     cv.Optional(CONF_WIFI, default=False): cv.boolean,
                     cv.Optional(CONF_MICROPHONE_MUTE): cv.use_id(switch.Switch),
                     cv.Optional(CONF_SPEAKER_MUTE): cv.use_id(switch.Switch),
                 }
             ),
+            cv.Optional(CONF_OBSERVER_BINDINGS, default=[]): cv.ensure_list(cv.Schema({
+                cv.Required("source"): cv.one_of(*SOURCE_HOOKS),
+                cv.Required("hook"): cv.string_strict,
+                cv.Required("automation"): ACTION_TRIGGER_SCHEMA,
+            })),
             cv.Optional(CONF_OUTPUTS, default={}): cv.Schema(
                 {
                     cv.Optional(CONF_LED): LED_OUTPUT_SCHEMA,
@@ -1255,6 +1483,7 @@ CONFIG_SCHEMA = cv.All(
                     cv.Optional(CONF_SEQUENCE): cv.use_id(
                         globals_component.GlobalsComponent
                     ),
+                    cv.Optional("api_clients"): cv.use_id(globals_component.GlobalsComponent),
                 }
             ),
             cv.Optional(CONF_VOIP): cv.Schema(
@@ -1288,6 +1517,8 @@ CONFIG_SCHEMA = cv.All(
     _validate_runtime_controller,
 )
 
+FINAL_VALIDATE_SCHEMA = _attach_source_observers
+
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
@@ -1296,11 +1527,23 @@ async def to_code(config):
     cg.add(var.set_debug(config[CONF_DEBUG]))
     if config[CONF_DEBUG]:
         cg.add_define("USE_RUNTIME_CONTROLLER_DEBUG")
+    presentation = config.get(CONF_PRESENTATION, {})
+    if presentation.get(CONF_PRIORITIES):
+        cg.add_define("USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY")
+    if CONF_ON_CHANGE in presentation:
+        cg.add_define("USE_RUNTIME_CONTROLLER_PRESENTATION_TRIGGER")
+        action = presentation[CONF_ON_CHANGE]
+        trigger = cg.new_Pvariable(action[automation.CONF_TRIGGER_ID],
+                                   cg.TemplateArguments(cg.std_string, cg.std_string))
+        cg.add(var.set_presentation_trigger(trigger))
+        await automation.build_automation(
+            trigger, [(cg.std_string, "previous"), (cg.std_string, "current")], action
+        )
 
     profile_full, activities, groups, derived_activities, events = (
         _merged_runtime_config(config)
     )
-    voip_states = dict(FULL_VOICE_VOIP_VOIP_STATES) if profile_full else {}
+    voip_states = dict(_voip_states(config)) if profile_full else {}
 
     if CONF_OUTPUT_SCRIPT in config:
         cg.add_define("USE_RUNTIME_CONTROLLER_OUTPUT_SCRIPT")
@@ -1349,13 +1592,26 @@ async def to_code(config):
                 cg.add(var.add_activity_policy(name, policy, value))
 
     observed = config[CONF_OBSERVE]
-    if observed.get(CONF_WIFI) or any(
+    source_events = any(observed.get(key) for key in SOURCE_HOOKS)
+    if source_events or observed.get(CONF_WIFI) or any(
         key in observed
         for key in (CONF_MICROPHONE_MUTE, CONF_SPEAKER_MUTE, CONF_MEDIA_PLAYER)
     ):
         observer = cg.new_Pvariable(config["observers_id"])
         await cg.register_component(observer, config)
         cg.add(observer.set_runtime(var))
+        if source_events:
+            cg.add_define("USE_RUNTIME_CONTROLLER_SOURCE_EVENTS")
+        if observed.get(CONF_VOICE_ASSISTANT) or observed.get(CONF_TIMERS):
+            cg.add_define("USE_RUNTIME_CONTROLLER_VOICE_ASSISTANT")
+            source = observed.get(CONF_VOICE_ASSISTANT) or observed[CONF_TIMERS]
+            cg.add(observer.set_voice_assistant(await cg.get_variable(source),
+                                                CONF_VOICE_ASSISTANT in observed, CONF_TIMERS in observed))
+        if observed.get(CONF_API):
+            cg.add_define("USE_RUNTIME_CONTROLLER_API")
+            if "api_clients" in state_outputs:
+                cg.add_define("USE_RUNTIME_CONTROLLER_API_CLIENT_OUTPUT")
+                cg.add(observer.set_api_clients_output(await cg.get_variable(state_outputs["api_clients"])))
         if observed.get(CONF_WIFI):
             wifi.request_wifi_connect_state_listener()
             cg.add_define("USE_RUNTIME_CONTROLLER_WIFI")
@@ -1401,6 +1657,19 @@ async def to_code(config):
     for group, group_activities in groups.items():
         for activity in group_activities:
             cg.add(var.set_activity_group(activity, group))
+
+    if presentation.get(CONF_PRIORITIES):
+        candidates = dict(activities)
+        if profile_full and CONF_VOIP_STACK in config[CONF_OBSERVE]:
+            candidates.update({f"voip:{state}": item for state, item in voip_states.items()})
+        if CONF_VOIP in config:
+            custom = config[CONF_VOIP]
+            candidates.update({custom[CONF_ACTIVITY_PREFIX] + state: item
+                               for state, item in custom[CONF_STATES].items()})
+        for name, activity in candidates.items():
+            state = activity.get(CONF_POLICIES, {}).get(CONF_PRESENTATION)
+            if state in presentation[CONF_PRIORITIES]:
+                cg.add(var.set_activity_presentation_priority(name, presentation[CONF_PRIORITIES][state]))
 
     if config[CONF_AUTO_EVENTS]:
         for name in activities:
@@ -1486,6 +1755,24 @@ async def to_code(config):
 async def _new_parented_action(config, action_id, template_arg):
     var = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(var, config[CONF_ID])
+    return var
+
+
+@automation.register_action(
+    "runtime_controller.source_event", SourceEventAction,
+    cv.Schema({
+        cv.GenerateID(): cv.use_id(RuntimeNetworkObservers),
+        cv.Required("event"): cv.string_strict,
+        cv.Optional("text", default=""): cv.templatable(cv.string),
+        cv.Optional("enabled", default=True): cv.templatable(cv.boolean),
+    }), synchronous=True,
+)
+async def source_event_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    cg.add(var.set_event(config["event"]))
+    cg.add(var.set_text(await cg.templatable(config["text"], args, cg.std_string)))
+    cg.add(var.set_enabled(await cg.templatable(config["enabled"], args, cg.bool_)))
     return var
 
 

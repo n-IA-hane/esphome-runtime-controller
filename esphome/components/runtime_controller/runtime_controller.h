@@ -35,6 +35,8 @@ class RuntimeController : public Component {
   };
 
   void setup() override;
+  void observe_event(const char *name);
+  void observe_activity(const char *name, bool active);
   void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::PROCESSOR; }
@@ -66,6 +68,12 @@ class RuntimeController : public Component {
   void add_policy_value_trigger(const char *policy, const char *value, Trigger<> *trigger);
   void add_policy_output(const char *policy, const char *value, int32_t output);
   void set_policy_change_trigger(const char *policy, Trigger<int32_t> *trigger);
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
+  void set_activity_presentation_priority(const char *activity, int16_t priority);
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_TRIGGER
+  void set_presentation_trigger(Trigger<std::string, std::string> *trigger) { this->presentation_trigger_ = trigger; }
+#endif
 #ifdef USE_RUNTIME_CONTROLLER_LED
   void set_led_light(light::LightState *light) { this->led_light_ = light; }
   void add_led_state(const char *state, float red, float green, float blue, float brightness, const char *effect);
@@ -194,6 +202,12 @@ class RuntimeController : public Component {
   bool voip_callback_registered_{false};
 #endif
   uint32_t sequence_{0};
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_TRIGGER
+  Trigger<std::string, std::string> *presentation_trigger_{nullptr};
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
+  uint32_t presentation_priority_mask_{0};
+#endif
   ResolvedPolicies resolved_policies_{};
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
   char voip_activity_[64]{};
@@ -305,6 +319,9 @@ class RuntimeController : public Component {
   };
 
   struct Storage {
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
+    std::array<int16_t, MAX_ACTIVITIES> presentation_priorities{};
+#endif
     std::array<ActivityConfig, MAX_ACTIVITIES> activities{};
     std::array<NamedAction, MAX_ACTIONS> actions{};
     std::array<NamedAction, MAX_ACTIONS> event_triggers{};

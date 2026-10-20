@@ -1,4 +1,4 @@
-# Updating to Runtime Controller 2026.10.0
+# Updating Runtime Controller
 
 Use ESPHome **2026.9.0 or newer**. Update the firmware packages from the Intercom
 repository together with Runtime Controller, then rebuild and upload the device.
@@ -18,13 +18,23 @@ for users keeping their own YAML.
 | Media playback | `observe.media_player: speaker_media_player` | Callbacks that only send `media_playing`, `media_paused`, `media_idle` or `announcement_started` |
 | Wi-Fi | `observe.wifi: true` | Duplicate forwarding of Wi-Fi connect/disconnect events |
 | Mic/speaker mute | The corresponding `observe` switch binding | Duplicate runtime mute events, **not** the action that mutes the hardware |
-| Voice Assistant | Shared Intercom voice callback packages | Unsupported `observe.voice_assistant`, if present |
-| Micro Wake Word | Shared Intercom wake-word callback package | Unsupported `observe.micro_wake_word`, if present |
-| HA API connection and timers | Shared Intercom callback packages | Only redundant copies of those same handlers |
+| Voice Assistant | `observe.voice_assistant: va` | Pure lifecycle event forwarding; retain UI text and local command actions |
+| Micro Wake Word | `observe.micro_wake_word: mww` | Pure `wake_word` forwarding; retain other detection actions |
+| HA API presence | `observe.api: true` | The old forwarding/counter scripts; the adapter owns counting and reconnect grace |
+| Assist timers | `observe.timers: va` | Manual timer activity/event forwarding; retain unrelated user actions |
 
-The two unsupported observation keys previously accepted configuration without
-registering a listener. They now fail validation. Removing their shared voice
-callbacks would remove the real connection to the controller.
+The development implementation binds the official source triggers automatically.
+It reserves IDs during schema validation and inserts one observer action into
+the existing automation chain, without replacing user actions or their delays.
+Duplicate explicit forwarding to the same controller is rejected.
+
+A simple `observe` configuration without a manual graph uses the presentation
+profile. Add `on_music`, `on_ringing`, `on_call`, `on_idle` or
+`on_state_change` with ordinary ESPHome actions. Existing explicit graphs and
+`outputs.led` remain valid; adopting the shorthand is optional.
+
+VoIP-only profiles are not migrated to Runtime Controller. Their existing
+VoIP Stack callbacks, controls and display adapters remain the owners.
 
 Keep user actions that do something else, such as updating a sensor or recording
 a call. Only remove duplicate forwarding or competing output writers.

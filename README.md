@@ -53,6 +53,8 @@ Requires ESPHome **2026.9.0 or newer**. See the
 The small examples teach coordination. They are alternatives to a maintained
 controller configuration, not blocks to paste alongside its existing controller.
 You can use the maintained firmware without learning the reducer implementation.
+VoIP-only device profiles keep their direct VoIP Stack callbacks and do not
+instantiate Runtime Controller.
 
 ## Start with a maintained device profile
 
@@ -65,7 +67,7 @@ already loads it; do not add a duplicate source or controller there.
 
 ```yaml
 external_components:
-  - source: github://n-IA-hane/esphome-runtime-controller@main
+  - source: github://n-IA-hane/esphome-runtime-controller@dev
     components: [runtime_controller]
 ```
 
@@ -115,6 +117,187 @@ Most of a display YAML describes pins, fonts, pictures and geometry. A reducer
 cannot remove those definitions. The device packages remove repeated wiring from
 the user-facing YAML, while the coordinator removes conflicting decisions from
 callbacks. These solve different parts of the original complexity.
+
+## Automatic VoIP binding in shared packages
+
+From 2026.10.1, the full controller and ringtone packages use the single VoIP
+component without requiring `id: phone`. You can choose a different ID or omit
+it when no lambda needs to refer to the component by name.
+
+For a custom observer, `voip_stack: {}` under `observe:` selects that same
+instance. Supplying an explicit ID remains supported. This selects an existing
+VoIP component; it does not create another phone.
+
+## Which components are observed directly?
+
+Input adapters use the component's existing notifications or compose into its
+official automation chain. Publicly readable state is acquired at setup; an
+unobservable detailed phase or past wake-word detection is not invented.
+
+| Input | Connection to the controller |
+|---|---|
+| VoIP call state | `observe.voip_stack` with a built-in profile (empty selects the single phone), or a custom `voip:` mapping |
+| Media player | `observe.media_player` |
+| Wi-Fi connection | `observe.wifi: true` |
+| Microphone mute switch | `observe.microphone_mute` |
+| Speaker mute switch | `observe.speaker_mute` |
+| Voice Assistant | `observe.voice_assistant: va` |
+| Micro Wake Word | `observe.micro_wake_word: mww` |
+| HA API connection | `observe.api: true`, diagnostic clients filtered and 250 ms reconnect grace |
+| Assist timers | `observe.timers: va`, reading the existing VA timer collection |
+
+When you enable a native listener, remove YAML callbacks that only forward the
+same event. Keep your other automations. Observing a mute switch does not mute
+hardware by itself: the switch's hardware mute action must remain.
+
+Voice, wake-word, timer and API bindings preserve the source's existing user
+actions and delays in one automation chain. Remove only duplicate state
+forwarding when opting into an observer. See the
+[exact listener events](esphome/components/runtime_controller/README.md#component-observation)
+when building custom rules.
+
+## Connect an existing media player without forwarding callbacks
+
+These shorthand triggers are available in the coordinated development sources.
+Use `@dev` for this example. Existing explicit activity/policy configurations stay
+supported, including `outputs.led` presets.
+
+Suppose your player is `speaker_media_player` and your light is `status_led`,
+with the ordinary ESPHome `Pulse` effect already declared on that light:
+
+```yaml
+runtime_controller:
+  id: runtime
+  observe:
+    media_player: speaker_media_player
+  on_music:
+    then:
+      - light.turn_on:
+          id: status_led
+          effect: Pulse
+  on_announcement:
+    then:
+      - light.turn_on:
+          id: status_led
+          effect: None
+          brightness: 100%
+  on_idle:
+    then:
+      - light.turn_off: status_led
+```
+
+No manual activity table, event forwarding or numeric state mapping is needed.
+`on_music` means music became the **selected presentation**. It runs again when
+an interruption ends and music remains active, without another player `on_play`.
+Repeated notifications of an unchanged presentation do not restart the action.
+The light component owns and runs the effect; the controller chooses when to
+request it. It does not render animation frames or download effects.
+
+The inferred `presentation` profile observes only. It does not start Assist,
+stop calls or change music volume. Your components retain those responsibilities;
+the maintained Full profile supplies its existing coordination actions.
+
+## Add sources and customize presentation
+
+Add the existing component IDs under `observe`:
+
+```yaml
+runtime_controller:
+  observe:
+    media_player: speaker_media_player
+    voice_assistant: va
+    micro_wake_word: mww
+    timers: va
+    voip_stack: phone
+    wifi: true
+    api: true
+  presentation:
+    priorities:
+      music: 50
+  on_ringing:
+    then:
+      - light.turn_on:
+          id: status_led
+          effect: Pulse
+  on_call:
+    then:
+      - light.turn_on:
+          id: status_led
+          effect: None
+  on_listening:
+    then:
+      - logger.log: Assistant is listening
+```
+
+Use this as an extension of the same controller, not a second instance.
+`on_ringing` is an incoming ringing call; `on_call` is an established call.
+Outgoing setup and remote ringing have `on_calling` and `on_remote_ringing`.
+Keep an `on_idle` action if your output should be cleared when no activity wins.
+
+Omitted priorities retain the existing profile defaults. Overrides affect the
+presentation, LED and display policies only, never call control or ducking.
+`on_state_change` provides the string arguments `previous` and `current` for
+custom displays. Native light effects need no animation loop in your YAML.
+Long-running custom scripts retain normal ESPHome semantics: explicitly stop
+such scripts from another trigger when that is what your application requires.
+
+Source events and selected presentation are different. For raw notifications,
+advanced configurations can still use `events.<event>.then`. A player's
+`ANNOUNCING` state is its reported lifecycle state, not a measurement that sound
+has physically reached the speaker.
+
+## Choosing only the features you need
+
+For a maintained Intercom device, choose the application in `firmware_features`.
+The device package selects its runtime bindings for you. To remove telephone
+functionality, remove `voip` there; changing an internal runtime rule alone does
+not remove the SIP component.
+
+For a custom or legacy composition, runtime packages are split into controller,
+voice, media, timer, ringtone, display and LED configuration. For example, a
+voice-only device does not need the ringtone adapter. These low-level adapters
+refer to existing component IDs and scripts; they do not create all dependencies.
+
+The built-in `full_voice_voip` profile supplies the activity rules. Its `features`
+setting selects the voice, media and timer rule sets. Selecting a rule set and
+including the hardware that carries it out are separate steps.
+
+For a device with Voice Assistant but no phone, Intercom also provides a
+[voice-only runtime preset](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/presets/voice_runtime.yaml).
+Supply its microphone, media player and mixer bindings as described in that
+package. Add wake-word hardware and callbacks separately if needed.
+
+See the [package table and migration examples](MIGRATION.md#choose-packages).
+For custom priorities, event cases, grouped activities and output configuration,
+use the [YAML reference](esphome/components/runtime_controller/README.md).
+
+## What an unused feature costs
+
+The firmware only includes the optional connections selected in its YAML:
+
+| Omitted configuration | Excluded from the runtime controller |
+|---|---|
+| Both VoIP observation forms | VoIP callbacks, call-state tracking fields and VoIP queue handling |
+| `outputs.led` | Light renderer, light pointer and the 32-entry LED mapping table |
+| `output_script` | The script connection and its stored pointer |
+| `observe.wifi` | Wi-Fi listener and its stored pointer |
+| `observe.media_player` | Media listener and its stored pointer |
+| Either mute observation | That switch's callback and pointer, independently of the other switch |
+| All Wi-Fi/media/mute observations | The observer component itself |
+
+The controller does not import LVGL or a display driver. Those are supplied by
+other YAML components only when the device uses them. In a maintained device,
+removing `display` from `firmware_features` removes its presentation bindings.
+In a custom composition, leave out the `display.yaml` adapter when there is no
+display script to call. Legacy full presets deliberately include all their
+adapters; custom builds can use `base.yaml` plus selected adapters instead.
+
+The generic reducer still needs its common rule tables and queues. Their
+capacity is fixed; selecting fewer profile rules does not resize every common
+table. The exclusions above remove feature-specific code and storage, rather
+than promising that the entire controller has zero overhead. Build flags apply
+to the whole firmware: a feature needed by one controller instance is compiled
+for that firmware.
 
 ## Four terms used in the YAML
 
@@ -220,167 +403,6 @@ call activity, and the remaining activities determine the output.
 To drive real hardware, replace the log action with your display or LED action.
 Keep that output under the controller's control: a second automation writing to
 the same LED can still overwrite the result.
-
-## Automatic VoIP binding in shared packages
-
-From 2026.10.1, the full controller and ringtone packages use the single VoIP
-component without requiring `id: phone`. You can choose a different ID or omit
-it when no lambda needs to refer to the component by name.
-
-For a custom observer, `voip_stack: {}` under `observe:` selects that same
-instance. Supplying an explicit ID remains supported. This selects an existing
-VoIP component; it does not create another phone.
-
-## Which components are observed directly?
-
-A native listener subscribes to the component's existing state notifications.
-It also reads the current state during setup, so the controller does not have
-to wait for the next change.
-
-| Input | Connection to the controller |
-|---|---|
-| VoIP call state | `observe.voip_stack` with the built-in profile (empty selects the single phone), or a custom `voip:` mapping |
-| Media player | `observe.media_player` |
-| Wi-Fi connection | `observe.wifi: true` |
-| Microphone mute switch | `observe.microphone_mute` |
-| Speaker mute switch | `observe.speaker_mute` |
-| Voice Assistant | Shared Intercom packages forward the official ESPHome callbacks |
-| Micro Wake Word | Shared Intercom package forwards `on_wake_word_detected` |
-| HA API connection and timer events | Shared Intercom callback packages |
-
-When you enable a native listener, remove YAML callbacks that only forward the
-same event. Keep your other automations. Observing a mute switch does not mute
-hardware by itself: the switch's hardware mute action must remain.
-
-`observe.voice_assistant` and `observe.micro_wake_word` are unsupported. Use the
-shared callback packages for those components. See the
-[exact listener events](esphome/components/runtime_controller/README.md#component-observation)
-when building custom rules.
-
-## Connect an existing media player without forwarding callbacks
-
-Suppose your device already has Wi-Fi, a media player named
-`speaker_media_player`, and a light named `status_led`. You want the light to
-show music, a higher-priority announcement, or a Wi-Fi outage.
-
-Start a separate custom controller with the fragment below. It replaces the
-button-driven example above; do not add a second controller with the same ID.
-The state listener supplies the events, so you do not need to add `on_play`,
-`on_pause` and `on_idle` callbacks to the media player.
-
-```yaml
-runtime_controller:
-  id: runtime
-  auto_events: false
-  observe:
-    media_player: speaker_media_player
-    wifi: true
-  activities:
-    idle:
-      initial: true
-      priority: 0
-      policies:
-        led_status: idle
-    music:
-      priority: 100
-      policies:
-        led_status: media
-    announcement:
-      priority: 200
-      policies:
-        led_status: responding
-    disconnected:
-      priority: 900
-      policies:
-        led_status: no_wifi
-  events:
-    media_playing:
-      activate: music
-      deactivate: announcement
-    media_paused:
-      deactivate: [music, announcement]
-    media_idle:
-      deactivate: [music, announcement]
-    announcement_started:
-      activate: announcement
-    wifi_connected:
-      deactivate: disconnected
-    wifi_disconnected:
-      activate: disconnected
-  outputs:
-    led:
-      id: status_led
-      preset: rgb_single
-```
-
-The three design steps are visible in this example:
-
-1. **Observe the inputs:** `observe` connects the existing player and Wi-Fi.
-2. **Decide precedence:** the announcement outranks music; disconnection outranks
-   both. Each event changes only the facts it owns.
-3. **Connect the output once:** `outputs.led` renders the winning `led_status`.
-
-When the player returns from an announcement to playing or paused, its native
-state notification selects the corresponding result. To change precedence,
-edit the priorities. To change colors, override the LED states as shown in the
-[YAML reference](esphome/components/runtime_controller/README.md#led-output).
-
-This example coordinates status only. It does not pause music, adjust volume or
-implement Voice Assistant. For those behaviors, use the corresponding adapters
-and the maintained voice/intercom rules below.
-
-## Choosing only the features you need
-
-For a maintained Intercom device, choose the application in `firmware_features`.
-The device package selects its runtime bindings for you. To remove telephone
-functionality, remove `voip` there; changing an internal runtime rule alone does
-not remove the SIP component.
-
-For a custom or legacy composition, runtime packages are split into controller,
-voice, media, timer, ringtone, display and LED configuration. For example, a
-voice-only device does not need the ringtone adapter. These low-level adapters
-refer to existing component IDs and scripts; they do not create all dependencies.
-
-The built-in `full_voice_voip` profile supplies the activity rules. Its `features`
-setting selects the voice, media and timer rule sets. Selecting a rule set and
-including the hardware that carries it out are separate steps.
-
-For a device with Voice Assistant but no phone, Intercom also provides a
-[voice-only runtime preset](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/presets/voice_runtime.yaml).
-Supply its microphone, media player and mixer bindings as described in that
-package. Add wake-word hardware and callbacks separately if needed.
-
-See the [package table and migration examples](MIGRATION.md#choose-packages).
-For custom priorities, event cases, grouped activities and output configuration,
-use the [YAML reference](esphome/components/runtime_controller/README.md).
-
-## What an unused feature costs
-
-The firmware only includes the optional connections selected in its YAML:
-
-| Omitted configuration | Excluded from the runtime controller |
-|---|---|
-| Both VoIP observation forms | VoIP callbacks, call-state tracking fields and VoIP queue handling |
-| `outputs.led` | Light renderer, light pointer and the 32-entry LED mapping table |
-| `output_script` | The script connection and its stored pointer |
-| `observe.wifi` | Wi-Fi listener and its stored pointer |
-| `observe.media_player` | Media listener and its stored pointer |
-| Either mute observation | That switch's callback and pointer, independently of the other switch |
-| All Wi-Fi/media/mute observations | The observer component itself |
-
-The controller does not import LVGL or a display driver. Those are supplied by
-other YAML components only when the device uses them. In a maintained device,
-removing `display` from `firmware_features` removes its presentation bindings.
-In a custom composition, leave out the `display.yaml` adapter when there is no
-display script to call. Legacy full presets deliberately include all their
-adapters; custom builds can use `base.yaml` plus selected adapters instead.
-
-The generic reducer still needs its common rule tables and queues. Their
-capacity is fixed; selecting fewer profile rules does not resize every common
-table. The exclusions above remove feature-specific code and storage, rather
-than promising that the entire controller has zero overhead. Build flags apply
-to the whole firmware: a feature needed by one controller instance is compiled
-for that firmware.
 
 ## How overlapping events are handled
 

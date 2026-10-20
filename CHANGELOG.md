@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Add simple source observation and natural presentation triggers such as
+  `on_music`, `on_ringing`, `on_call` and `on_idle`, using ordinary ESPHome actions.
+- Compose Voice Assistant, wake-word, timer and API observations into the source's
+  official automation chain without replacing user callbacks or delays.
+- Keep presentation priority overrides separate from audio and control policies.
+- Preserve the existing Full coordination rules and advanced configurations;
+  VoIP-only device packages remain on direct VoIP Stack callbacks.
+- Replace manual Full-package event forwarding with the shared observers.
+
 ## 2026.10.2-dev
 
 - Share application bindings with the coordinated Intercom device packages.
