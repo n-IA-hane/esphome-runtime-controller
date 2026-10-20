@@ -57,10 +57,14 @@ int main(){
  bool user_text_updated=false;unsigned listening=0;
  esphome::Trigger<> listener;listener.fn=[&]{assert(user_text_updated);++listening;};
  r.add_policy_value_trigger("presentation","listening",&listener);r.setup();
+ assert(!r.loop_enabled()); // an idle reducer must not poll
  esphome::voice_assistant::VoiceAssistant voice;
- RuntimeNetworkObservers o;o.set_runtime(&r);o.set_voice_assistant(&voice,true);o.setup();r.loop();
- o.source_event("va_listening","");assert(listening==0);
- user_text_updated=true;r.loop();assert(listening==1);
+ RuntimeNetworkObservers o;o.set_runtime(&r);o.set_voice_assistant(&voice,true);o.setup();
+ assert(!o.loop_enabled()); // source callbacks own subsequent observations
+ assert(r.loop_enabled()); // startup observations wake the existing reducer
+ r.loop();assert(!r.loop_enabled());
+ o.source_event("va_listening","");assert(listening==0);assert(r.loop_enabled());
+ user_text_updated=true;r.loop();assert(listening==1);assert(!r.loop_enabled());
  o.source_event("va_listening","");r.loop();assert(listening==1);
  voice.timers={{"first"},{"second"}};
  o.source_event("timer_started","first");r.loop();assert(r.is_activity_active("timer"));
@@ -81,6 +85,8 @@ int main(){
  assert(r.is_activity_active("online"));
  o.source_event("api_disconnected","Home Assistant C");o.fire_timeouts();r.loop();
  assert(!r.is_activity_active("online"));
+ assert(!r.loop_enabled() && !o.loop_enabled());
+ assert(o.timers.empty()); // grace timeout is one-shot, not periodic polling
 }
 ''')
     implementation = ROOT / "esphome/components/runtime_controller"
