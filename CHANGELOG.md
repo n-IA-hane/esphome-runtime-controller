@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 2026.10.0-dev
+
+> **Attention: ESPHome 2026.10.0 or newer is required.**
+>
+> ESPHome 2026.10 brings substantial audio changes, including several of our
+> accepted contributions. Thank you to the ESPHome team for your work, reviews
+> and accepted PRs! <3
+>
+> We have aligned Audio Stack, ESP VoIP Stack, Runtime Controller and the
+> maintained device packages with this release. Older ESPHome versions are no
+> longer supported and their operation is not guaranteed. Upgrade the builder
+> before compiling the new firmware.
+
+
+- Require **ESPHome 2026.10.0 or newer** alongside the coordinated Audio Stack
+  and VoIP Stack release. Observers, priorities, trigger behavior and audio
+  ownership are unchanged by the version-floor update.
 
 - Observe media state transitions once: repeated volume/metadata publications
   no longer repeat media events and their controller actions. Initial state

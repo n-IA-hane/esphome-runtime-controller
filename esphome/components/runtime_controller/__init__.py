@@ -1433,6 +1433,7 @@ def _validate_runtime_controller(config):
 
 
 CONFIG_SCHEMA = cv.All(
+    cv.require_esphome_version(2026, 10, 0),
     _prepare_presentation,
     cv.Schema(
         {

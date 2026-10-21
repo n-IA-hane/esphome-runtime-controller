@@ -5,7 +5,7 @@ small observer/trigger example. This reference explains configuration fragments
 that you merge into a device YAML. IDs such as `phone`, `speaker_media_player`
 and `status_led` refer to components you must supply.
 
-Requires ESPHome 2026.9.0 or newer for the maintained packages.
+Requires ESPHome 2026.10.0 or newer for the maintained packages.
 
 ## Controller options
 

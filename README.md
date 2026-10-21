@@ -18,7 +18,7 @@ should do. The audio components still own playback and the VoIP component still
 owns calls.
 
 Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.1).
-Requires ESPHome **2026.9.0 or newer**. See the
+Requires ESPHome **2026.10.0 or newer**. See the
 [changes since 2026.9.2](CHANGELOG.md) and [migration guide](MIGRATION.md).
 
 ## Choose how far you need to go
