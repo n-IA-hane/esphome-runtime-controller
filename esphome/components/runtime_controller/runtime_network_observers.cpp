@@ -68,7 +68,13 @@ void RuntimeNetworkObservers::setup() {
         case media_player::MEDIA_PLAYER_STATE_ON: event = "media_idle"; break;
         default: break;
       }
-      if (event != nullptr) this->runtime_->event(event);
+      if (event == nullptr ||
+          (this->last_media_event_ != nullptr && std::strcmp(event, this->last_media_event_) == 0))
+        return;
+      // Volume and metadata updates may republish the same state. Store the
+      // observation before dispatch because an action may change the player.
+      this->last_media_event_ = event;
+      this->runtime_->event(event);
     };
     this->media_player_->add_on_state_callback(publish);
     publish(this->media_player_->state);

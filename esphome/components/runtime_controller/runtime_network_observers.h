@@ -87,6 +87,7 @@ class RuntimeNetworkObservers : public Component
 #endif
 #ifdef USE_RUNTIME_CONTROLLER_MEDIA_PLAYER
   media_player::MediaPlayer *media_player_{nullptr};
+  const char *last_media_event_{nullptr};
 #endif
 #ifdef USE_RUNTIME_CONTROLLER_WIFI
   wifi::WiFiComponent *wifi_{nullptr};

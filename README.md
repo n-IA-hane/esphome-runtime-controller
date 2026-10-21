@@ -131,6 +131,11 @@ When you enable a native listener, remove YAML callbacks that only forward the
 same event. Keep your other automations. Observing a mute switch does not mute
 hardware by itself: the switch's hardware mute action must remain.
 
+The media observer replays the initial state, then emits only changes between
+playing, paused, announcing and idle. Volume or metadata updates that republish
+the same state do not retrigger controller actions. Existing player callbacks
+and explicit `runtime_controller.event` actions keep their usual behavior.
+
 Voice, wake-word, timer and API bindings preserve the source's existing user
 actions and delays in one automation chain. Remove only duplicate state
 forwarding when opting into an observer. See the

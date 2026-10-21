@@ -42,12 +42,14 @@ class Component {
 """,
         "esphome/components/runtime_controller/runtime_controller.h": r"""
 #pragma once
+#include <functional>
 #include <string>
 #include <vector>
 namespace esphome::runtime_controller {
 struct RuntimeController {
   std::vector<std::string> events;
-  void event(const char *name) { events.emplace_back(name); }
+  std::function<void(const char *)> on_event;
+  void event(const char *name) { events.emplace_back(name); if(on_event) on_event(name); }
 };
 }
 """,
@@ -203,6 +205,33 @@ int main() {
   media.publish(media_player::MEDIA_PLAYER_STATE_PAUSED); expected.emplace_back("media_paused");
   assert(media_user_calls==4 && media.callbacks.size()==2);
   assert(runtime.events==expected);
+  // Volume/metadata updates may republish the same player state. Native user
+  // callbacks still receive them; the controller observes state transitions.
+  for (int i=0; i<100; ++i)
+    media.publish(media_player::MEDIA_PLAYER_STATE_PAUSED);
+  assert(media_user_calls==104);
+  assert(runtime.events==expected);
+  media.publish(media_player::MEDIA_PLAYER_STATE_PLAYING); expected.emplace_back("media_playing");
+  media.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING); expected.emplace_back("announcement_started");
+  media.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+  media.publish(media_player::MEDIA_PLAYER_STATE_PLAYING); expected.emplace_back("media_playing");
+  media.publish(media_player::MEDIA_PLAYER_STATE_IDLE); expected.emplace_back("media_idle");
+  media.publish(media_player::MEDIA_PLAYER_STATE_OFF);
+  media.publish(media_player::MEDIA_PLAYER_STATE_ON);
+  media.publish(media_player::MEDIA_PLAYER_STATE_NONE);
+  assert(media_user_calls==112 && runtime.events==expected);
+  media.publish(static_cast<media_player::MediaPlayerState>(255));
+  assert(runtime.events==expected);
+  // An output action can synchronously change the source. The nested PAUSED
+  // observation must remain current after the outer PLAYING callback returns.
+  runtime.on_event=[&](const char *name) {
+    if (std::string(name)=="media_playing") media.publish(media_player::MEDIA_PLAYER_STATE_PAUSED);
+  };
+  media.publish(media_player::MEDIA_PLAYER_STATE_PLAYING);
+  expected.emplace_back("media_playing"); expected.emplace_back("media_paused");
+  media.publish(media_player::MEDIA_PLAYER_STATE_PAUSED);
+  assert(runtime.events==expected);
+  runtime.on_event={};
 #endif
   // Optional bindings stay optional; registering one observer must not require
   // unrelated components or invent their initial states.

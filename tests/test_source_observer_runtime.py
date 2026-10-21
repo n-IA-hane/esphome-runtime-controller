@@ -101,3 +101,85 @@ int main(){
     ], capture_output=True, text=True)
     assert compiled.returncode == 0, compiled.stderr
     subprocess.run([str(binary)], check=True)
+
+
+def test_media_observer_reduces_transitions_once_with_real_controller(tmp_path):
+    stubs = tmp_path / "stubs"
+    shutil.copytree(ROOT / "tests/fixtures/core/stubs", stubs)
+    component = stubs / "esphome/core/component.h"
+    component.write_text(component.read_text().replace(
+        "constexpr float PROCESSOR = 400;", "constexpr float PROCESSOR = 400, AFTER_WIFI = 200;"
+    ))
+    media = stubs / "esphome/components/media_player/media_player.h"
+    media.parent.mkdir(parents=True)
+    media.write_text(r'''
+#pragma once
+#include <functional>
+#include <vector>
+namespace esphome::media_player {
+enum MediaPlayerState { MEDIA_PLAYER_STATE_NONE, MEDIA_PLAYER_STATE_IDLE,
+ MEDIA_PLAYER_STATE_PLAYING, MEDIA_PLAYER_STATE_PAUSED, MEDIA_PLAYER_STATE_ANNOUNCING,
+ MEDIA_PLAYER_STATE_OFF, MEDIA_PLAYER_STATE_ON };
+class MediaPlayer {
+ public:
+  MediaPlayerState state=MEDIA_PLAYER_STATE_IDLE;
+  std::vector<std::function<void(MediaPlayerState)>> callbacks;
+  template<typename F> void add_on_state_callback(F callback) { callbacks.push_back(callback); }
+  void publish(MediaPlayerState value) { state=value; for(auto &cb:callbacks) cb(value); }
+};
+}
+''')
+    main = tmp_path / "media_observer.cpp"
+    main.write_text(r'''
+#include "runtime_controller.h"
+#include "runtime_network_observers.h"
+#include <cassert>
+using namespace esphome;
+using namespace esphome::runtime_controller;
+int main() {
+ RuntimeController r;
+ r.add_activity("media",10,false);
+ r.add_event_activity("media_playing","media",true);
+ r.add_event_activity("media_paused","media",false);
+ r.add_event_activity("media_idle","media",false);
+ media_player::MediaPlayer player;
+ unsigned user_callbacks=0, actions=0;
+ bool pause_in_action=false;
+ player.add_on_state_callback([&](auto){++user_callbacks;});
+ Trigger<> play;
+ play.fn=[&]{++actions;if(pause_in_action)player.publish(media_player::MEDIA_PLAYER_STATE_PAUSED);};
+ r.add_event_trigger("media_playing",&play);
+ r.setup();
+ RuntimeNetworkObservers observer;observer.set_runtime(&r);observer.set_media_player(&player);observer.setup();
+ assert(!r.loop_enabled() && !observer.loop_enabled());
+ player.publish(media_player::MEDIA_PLAYER_STATE_PLAYING);
+ assert(actions==1 && r.is_activity_active("media"));
+ const auto revision=r.get_sequence();
+ for(unsigned i=0;i<100;++i)player.publish(media_player::MEDIA_PLAYER_STATE_PLAYING);
+ assert(user_callbacks==101 && actions==1 && r.get_sequence()==revision);
+ player.publish(media_player::MEDIA_PLAYER_STATE_PAUSED);
+ assert(!r.is_activity_active("media"));
+ pause_in_action=true;
+ player.publish(media_player::MEDIA_PLAYER_STATE_PLAYING);
+ r.loop();
+ assert(actions==2 && !r.is_activity_active("media"));
+ player.publish(media_player::MEDIA_PLAYER_STATE_PAUSED);r.loop();
+ assert(actions==2 && !r.loop_enabled());
+ // Explicit operation events can intentionally repeat an action.
+ pause_in_action=false;
+ r.event("media_playing");r.event("media_playing");
+ assert(actions==4 && r.is_activity_active("media"));
+ assert(player.state==media_player::MEDIA_PLAYER_STATE_PAUSED);
+}
+''')
+    implementation = ROOT / "esphome/components/runtime_controller"
+    binary = tmp_path / "media_observer"
+    result = subprocess.run([
+        "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
+        "-DUSE_RUNTIME_CONTROLLER_MEDIA_PLAYER", "-I", str(stubs), "-I", str(implementation), "-I", str(ROOT),
+        str(main), *(str(implementation / name) for name in (
+            "runtime_controller.cpp", "runtime_controller_state.cpp", "runtime_network_observers.cpp")),
+        "-o", str(binary),
+    ], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    subprocess.run([str(binary)], check=True)

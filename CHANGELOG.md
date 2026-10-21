@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Observe media state transitions once: repeated volume/metadata publications
+  no longer repeat media events and their controller actions. Initial state
+  replay, real transitions and the player's existing callbacks are preserved.
+
 - Add simple source observation and natural presentation triggers such as
   `on_music`, `on_ringing`, `on_call` and `on_idle`, using ordinary ESPHome actions.
 - Compose Voice Assistant, wake-word, timer and API observations into the source's
