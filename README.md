@@ -2,7 +2,7 @@
 
 *Developed and maintained by n-IA-hane, with community contributions and support. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
 
-[Development preview 2026.10.2-dev](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.2-dev) uses the coordinated `dev` sources.
+[Development preview 2026.10.0-dev](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.0-dev) uses the coordinated `dev` sources.
 
 Runtime Controller coordinates the visible state and shared controls of an
 ESPHome device that combines music, Voice Assistant, calls and timers.
