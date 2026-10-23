@@ -10,10 +10,87 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 using esphome::Trigger;
 using esphome::runtime_controller::RuntimeController;
+
+class StorageProbe : public RuntimeController {
+ public:
+  size_t expected_rule_storage_bytes(size_t rules) const {
+    return sizeof(Storage) - sizeof(this->storage_->event_rules) + sizeof(void *) + sizeof(size_t) +
+           sizeof(EventRule) * rules;
+  }
+};
+
+template<typename T, typename = void> struct HasRuleCapacity : std::false_type {};
+template<typename T> struct HasRuleCapacity<T, std::void_t<decltype(std::declval<T &>().set_event_rule_capacity(0))>>
+    : std::true_type {};
+
+template<typename T> static void configure_rule_capacity(T &runtime, size_t count) {
+  // Keep the before-fix witness executable: the old controller reserves 64
+  // entries, so its allocation assertion fails rather than its compilation.
+  if constexpr (HasRuleCapacity<T>::value) runtime.set_event_rule_capacity(count);
+}
+
+static void test_rule_storage_matches_configuration() {
+  for (bool external : {false, true}) {
+    for (size_t count : {0U, 1U, 17U, 62U, 64U}) {
+      const size_t allocated_before = esphome::testing::allocated_bytes;
+      const size_t released_before = esphome::testing::released_bytes;
+      {
+        StorageProbe runtime;
+        configure_rule_capacity(runtime, count);
+        runtime.set_storage_in_psram(external);
+        unsigned calls = 0;
+        Trigger<> action;
+        action.fn = [&] { ++calls; };
+        runtime.add_action_trigger("action", &action);
+        for (size_t i = 0; i < count; ++i) runtime.add_event_rule("go", "action");
+        runtime.setup();
+        assert(!runtime.is_failed());
+        assert(esphome::testing::allocated_bytes - allocated_before <= runtime.expected_rule_storage_bytes(count));
+        assert(esphome::testing::last_allocation_flags == (external ? 1U : 2U));
+        const unsigned attempts = esphome::testing::allocation_attempts;
+        runtime.event("go");
+        runtime.loop();  // Named actions intentionally execute on the next loop.
+        assert(calls == (count > 0 ? 1U : 0U));
+        assert(esphome::testing::allocation_attempts == attempts);
+      }
+      assert(esphome::testing::allocated_bytes - allocated_before ==
+             esphome::testing::released_bytes - released_before);
+    }
+  }
+  // Each instance keeps its own configured capacity and storage lifetime.
+  StorageProbe first, second;
+  configure_rule_capacity(first, 1);
+  configure_rule_capacity(second, 17);
+  first.set_storage_in_psram(false);
+  second.set_storage_in_psram(true);
+  first.add_event_rule("first", "");
+  for (unsigned i = 0; i < 17; ++i) second.add_event_rule("second", "");
+  first.setup(); second.setup();
+  assert(!first.is_failed() && !second.is_failed());
+  first.event("first"); second.event("second");
+
+  for (unsigned stage : {1U, 2U}) {
+    const size_t live_before = esphome::testing::allocated_bytes - esphome::testing::released_bytes;
+    {
+      StorageProbe failed;
+      configure_rule_capacity(failed, 17);
+      esphome::testing::fail_on_attempt = esphome::testing::allocation_attempts + stage;
+      failed.set_storage_in_psram(false);
+      failed.add_event_rule("must-not-run", "");
+      failed.setup();
+      assert(failed.is_failed());
+      esphome::testing::fail_on_attempt = 0;
+      failed.event("must-not-run");
+    }
+    assert(esphome::testing::allocated_bytes - esphome::testing::released_bytes == live_before);
+  }
+}
 
 template<typename T> struct Global {
   using value_type = T;
@@ -526,7 +603,9 @@ static void test_voip_overflow_reconciles_latest_state() {
 int main(int argc, char **argv) {
   assert(argc == 2);
   const std::string test = argv[1];
-  if (test == "snapshot")
+  if (test == "rule_storage")
+    test_rule_storage_matches_configuration();
+  else if (test == "snapshot")
     test_snapshot_publication();
   else if (test == "event_order")
     test_event_run_to_completion();

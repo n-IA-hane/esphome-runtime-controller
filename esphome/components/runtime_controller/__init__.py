@@ -1285,7 +1285,6 @@ def _validate_runtime_controller(config):
             "runtime_controller event 'then' names must not collide with top-level actions: "
             + ", ".join(sorted(action_collisions))
         )
-    event_rule_count = 0
     for event_name, event_conf in events.items():
         rules = list(event_conf.get(CONF_CASES, []))
         if (
@@ -1294,7 +1293,6 @@ def _validate_runtime_controller(config):
             or event_conf.get(CONF_ACTION)
         ):
             rules.append(event_conf)
-        event_rule_count += len(rules)
         for rule in rules:
             refs = (
                 _as_list(rule.get(CONF_ANY, []))
@@ -1329,6 +1327,7 @@ def _validate_runtime_controller(config):
                 raise cv.Invalid(
                     f"runtime_controller event '{event_name}' references unknown action '{action}'"
                 )
+    event_rule_count = _event_rule_count(events)
     if event_rule_count > 64:
         raise cv.Invalid(
             f"runtime_controller supports at most 64 event rules, got {event_rule_count}"
@@ -1521,9 +1520,20 @@ CONFIG_SCHEMA = cv.All(
 FINAL_VALIDATE_SCHEMA = _attach_source_observers
 
 
+def _event_rule_count(events):
+    """Count the rules after profile/observer expansion, as codegen emits them."""
+    return sum(
+        len(event.get(CONF_CASES, []))
+        + bool(event.get(CONF_ACTIVATE) or event.get(CONF_DEACTIVATE) or event.get(CONF_ACTION))
+        for event in events.values()
+    )
+
+
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    profile_full, activities, groups, derived_activities, events = _merged_runtime_config(config)
+    cg.add(var.set_event_rule_capacity(_event_rule_count(events)))
     cg.add(var.set_storage_in_psram(config[CONF_STORAGE_IN_PSRAM]))
     cg.add(var.set_debug(config[CONF_DEBUG]))
     if config[CONF_DEBUG]:
@@ -1541,9 +1551,6 @@ async def to_code(config):
             trigger, [(cg.std_string, "previous"), (cg.std_string, "current")], action
         )
 
-    profile_full, activities, groups, derived_activities, events = (
-        _merged_runtime_config(config)
-    )
     voip_states = dict(_voip_states(config)) if profile_full else {}
 
     if CONF_OUTPUT_SCRIPT in config:

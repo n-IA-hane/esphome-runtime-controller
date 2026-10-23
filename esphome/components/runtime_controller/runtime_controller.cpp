@@ -32,6 +32,17 @@ static uint8_t activity_index_or_invalid(int index) {
 
 RuntimeController::~RuntimeController() { this->release_storage_(); }
 
+void RuntimeController::set_event_rule_capacity(size_t capacity) {
+  if (this->config_error_ || capacity == this->event_rule_capacity_)
+    return;
+  if (capacity > 64 || this->storage_ != nullptr) {
+    ESP_LOGE(TAG, "Rule capacity must be at most 64 and set before storage allocation");
+    this->mark_config_error_();
+    return;
+  }
+  this->event_rule_capacity_ = capacity;
+}
+
 void RuntimeController::set_storage_in_psram(bool storage_in_psram) {
   if (this->config_error_)
     return;
@@ -74,13 +85,35 @@ bool RuntimeController::allocate_storage_() {
     this->mark_config_error_();
     return false;
   }
-  this->storage_ = new (storage) Storage{};
+  new (storage) Storage{};
+  if (this->event_rule_capacity_ > 0) {
+    RAMAllocator<EventRule> rule_allocator(flags);
+    EventRule *rules = rule_allocator.allocate(this->event_rule_capacity_);
+    if (rules == nullptr) {
+      storage->~Storage();
+      allocator.deallocate(storage, 1);
+      ESP_LOGE(TAG, "Failed to allocate %u event rules", static_cast<unsigned>(this->event_rule_capacity_));
+      this->mark_config_error_();
+      return false;
+    }
+    for (size_t i = 0; i < this->event_rule_capacity_; ++i)
+      new (rules + i) EventRule{};
+    storage->event_rules = {rules, this->event_rule_capacity_};
+  }
+  this->storage_ = storage;
   return true;
 }
 
 void RuntimeController::release_storage_() {
   if (this->storage_ == nullptr)
     return;
+  auto &rules = this->storage_->event_rules;
+  if (rules.entries != nullptr) {
+    for (size_t i = 0; i < rules.capacity; ++i)
+      rules.entries[i].~EventRule();
+    RAMAllocator<EventRule> rule_allocator;
+    rule_allocator.deallocate(rules.entries, rules.capacity);
+  }
   this->storage_->~Storage();
   RAMAllocator<Storage> allocator;
   allocator.deallocate(this->storage_, 1);
@@ -145,7 +178,8 @@ void RuntimeController::dump_config() {
                 static_cast<unsigned>(this->storage_->event_updates.size()));
   ESP_LOGCONFIG(TAG, "  Derived activities: %u/%u", static_cast<unsigned>(this->derived_activity_count_),
                 static_cast<unsigned>(this->storage_->derived_activities.size()));
-  ESP_LOGCONFIG(TAG, "  Storage: %u bytes in %s RAM", static_cast<unsigned>(sizeof(Storage)),
+  ESP_LOGCONFIG(TAG, "  Storage: %u bytes in %s RAM",
+                static_cast<unsigned>(sizeof(Storage) + this->storage_->event_rules.size() * sizeof(EventRule)),
                 this->storage_in_psram_ ? "external" : "internal");
   ESP_LOGCONFIG(TAG, "  Debug: %s", YESNO(this->debug_));
   ESP_LOGCONFIG(TAG, "  Config valid: %s", YESNO(!this->config_error_));

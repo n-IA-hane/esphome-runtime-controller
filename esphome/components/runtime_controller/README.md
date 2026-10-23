@@ -542,7 +542,12 @@ Event names must fit in 47 UTF-8 bytes. Generated VoIP activity names, including
 the prefix, must fit in 63 bytes. Invalid references, cyclic derived rules and
 schema capacity violations are rejected before compilation.
 
-The core allocates fixed tables and queues, using internal memory by default.
+The core allocates its configuration tables once, using internal memory by default.
+The event-rule table fits the rules generated for that instance, from zero to
+64. Pending event/action queues and the other configuration limits remain fixed;
+dispatch does not grow or allocate the rule table. Direct C++ configurations
+keep the historical 64-rule default unless `set_event_rule_capacity()` is called
+before the first configuration operation.
 `storage_in_psram: true` moves these tables and queues to PSRAM; it does not move
 audio buffers or task stacks. Templated action parameters may allocate temporary
 strings. A failed state allocation stops configuration rather than leaving a

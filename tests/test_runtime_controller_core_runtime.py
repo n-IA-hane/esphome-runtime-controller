@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "esphome" / "components" / "runtime_controller"
 FIXTURES = ROOT / "tests" / "fixtures" / "core"
 CORE_CASES = (
+    "rule_storage",
     "snapshot",
     "event_order",
     "nested_setters",

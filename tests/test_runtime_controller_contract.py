@@ -126,7 +126,9 @@ def test_runtime_storage_has_an_explicit_psram_gate() -> None:
     assert "RAMAllocator<Storage>::ALLOC_EXTERNAL" in cpp
     assert "RAMAllocator<Storage>::ALLOC_INTERNAL" in cpp
     assert "Storage *storage_{nullptr};" in header
-    assert "std::array<EventRule, 64> event_rules{};" in header
+    assert "EventRuleStorage event_rules{};" in header
+    assert "rule_allocator.allocate(this->event_rule_capacity_)" in cpp
+    assert "var.set_event_rule_capacity(_event_rule_count(events))" in init
     assert "std::array<PendingEvent, 16> pending_events{};" in header
 
 

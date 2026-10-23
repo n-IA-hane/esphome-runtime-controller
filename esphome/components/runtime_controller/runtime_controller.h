@@ -43,6 +43,9 @@ class RuntimeController : public Component {
 
   void set_debug(bool debug) { this->debug_ = debug; }
   void set_storage_in_psram(bool storage_in_psram);
+  // Codegen sets the exact capacity before any configuration allocates storage.
+  // Direct C++ users retain the historical 64-rule default.
+  void set_event_rule_capacity(size_t capacity);
 #ifdef USE_RUNTIME_CONTROLLER_OUTPUT_SCRIPT
   void set_output_script(script::Script<> *script) { this->output_script_ = script; }
 #endif
@@ -318,6 +321,14 @@ class RuntimeController : public Component {
 #endif
   };
 
+  struct EventRuleStorage {
+    EventRule *entries{nullptr};
+    size_t capacity{0};
+    EventRule &operator[](size_t index) { return this->entries[index]; }
+    const EventRule &operator[](size_t index) const { return this->entries[index]; }
+    size_t size() const { return this->capacity; }
+  };
+
   struct Storage {
 #ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
     std::array<int16_t, MAX_ACTIVITIES> presentation_priorities{};
@@ -326,7 +337,7 @@ class RuntimeController : public Component {
     std::array<NamedAction, MAX_ACTIONS> actions{};
     std::array<NamedAction, MAX_ACTIONS> event_triggers{};
     std::array<EventActivity, MAX_EVENT_UPDATES> event_updates{};
-    std::array<EventRule, 64> event_rules{};
+    EventRuleStorage event_rules{};
     std::array<DerivedActivity, 16> derived_activities{};
     std::array<PolicyValueAction, 32> policy_value_actions{};
     std::array<PolicyOutput, 64> policy_outputs{};
@@ -344,6 +355,7 @@ class RuntimeController : public Component {
 
   Storage *storage_{nullptr};
   bool storage_in_psram_{false};
+  size_t event_rule_capacity_{64};
   StateOutput activity_mask_output_{};
   StateOutput sequence_output_{};
   size_t activity_count_{0};
