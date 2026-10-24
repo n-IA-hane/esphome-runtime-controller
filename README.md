@@ -21,6 +21,11 @@ Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-runtime-control
 Requires ESPHome **2026.10.0 or newer**. See the
 [changes since 2026.9.2](CHANGELOG.md) and [migration guide](MIGRATION.md).
 
+Native observers use the official ESPHome media player, Voice Assistant,
+Micro Wake Word and API automation interfaces. Replacement providers for those
+components are not required. The observed components keep ownership of their
+audio, calls and hardware.
+
 ## Choose how far you need to go
 
 | Your situation | Read next | What you change |
