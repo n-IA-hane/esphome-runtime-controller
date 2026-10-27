@@ -2,7 +2,7 @@
 
 *Developed and maintained by n-IA-hane, with community contributions and support. [❤️ Sponsor the project](https://github.com/sponsors/n-IA-hane)*
 
-[Development preview 2026.11.0-dev](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.11.0-dev) uses the coordinated `dev` sources.
+[Release 2026.11.0](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.11.0) uses the coordinated `main` sources.
 
 Runtime Controller coordinates the visible state and shared controls of an
 ESPHome device that combines music, Voice Assistant, calls and timers.
@@ -17,7 +17,7 @@ happening; priorities decide what the LED, display, ringtone and audio controls
 should do. The audio components still own playback and the VoIP component still
 owns calls.
 
-Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.1).
+Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.11.0).
 Requires ESPHome **2026.10.0 or newer**. See the
 [changes since 2026.10.1](CHANGELOG.md) and [migration guide](MIGRATION.md).
 
@@ -45,7 +45,7 @@ instantiate Runtime Controller.
 ## Start with a maintained device profile
 
 For a complete intercom or voice device, start from an
-[Intercom YAML profile](https://github.com/n-IA-hane/esphome-intercom/tree/dev/yamls).
+[Intercom YAML profile](https://github.com/n-IA-hane/esphome-intercom/tree/main/yamls).
 It supplies the microphone, speaker, runtime packages and board-specific wiring.
 
 For your own controller, load the component below. A maintained device package
@@ -53,7 +53,7 @@ already loads it; do not add a duplicate source or controller there.
 
 ```yaml
 external_components:
-  - source: github://n-IA-hane/esphome-runtime-controller@dev
+  - source: github://n-IA-hane/esphome-runtime-controller@main
     components: [runtime_controller]
 ```
 
@@ -70,13 +70,13 @@ substitutions:
 Keep the other substitutions and the device package from that board's YAML.
 Removing `voip` also removes the phone input, phone controls and its UI bindings.
 Removing `music` leaves announcement playback available for voice replies and
-ringtones. The [Intercom package guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/README.md)
+ringtones. The [Intercom package guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/README.md)
 contains the complete selection table.
 
-The feature-list layout is available in the coordinated Intercom development
-preview. Use its matching `dev` sources; older stable device YAMLs can still use
+The feature-list layout is supplied by the coordinated Intercom 2026.11.0
+packages. Use the matching `main` sources; older device YAMLs can still use
 the previous composition. The
-[device migration checklist](https://github.com/n-IA-hane/esphome-intercom/blob/dev/docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
+[device migration checklist](https://github.com/n-IA-hane/esphome-intercom/blob/main/docs/BREAKING_CHANGES.md#development-firmware-new-device-packages)
 explains what to carry over from an existing installation.
 
 The older `packages/runtime_controller/full_controller.yaml` and individual
@@ -149,8 +149,8 @@ when building custom rules.
 
 ## Connect an existing media player without forwarding callbacks
 
-These shorthand triggers are available in the coordinated development sources.
-Use `@dev` for this example. Existing explicit activity/policy configurations stay
+These shorthand triggers are available from 2026.11.0.
+Use `@main` for this example. Existing explicit activity/policy configurations stay
 supported, including `outputs.led` presets.
 
 Suppose your player is `speaker_media_player` and your light is `status_led`,
@@ -254,7 +254,7 @@ setting selects the voice, media and timer rule sets. Selecting a rule set and
 including the hardware that carries it out are separate steps.
 
 For a device with Voice Assistant but no phone, Intercom also provides a
-[voice-only runtime preset](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/presets/voice_runtime.yaml).
+[voice-only runtime preset](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/presets/voice_runtime.yaml).
 Supply its microphone, media player and mixer bindings as described in that
 package. Add wake-word hardware and callbacks separately if needed.
 

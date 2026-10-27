@@ -1,3 +1,3 @@
 # Compatibility entrypoint. Application bindings are maintained with the device packages.
 packages:
-  binding: github://n-IA-hane/esphome-intercom/packages/features/presentation/display_runtime.yaml@dev
+  binding: github://n-IA-hane/esphome-intercom/packages/features/presentation/display_runtime.yaml@main

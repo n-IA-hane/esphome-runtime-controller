@@ -20,7 +20,7 @@ infers the presentation profile; no manual event-forwarding callbacks are needed
 .. code-block:: yaml
 
     external_components:
-      - source: github://n-IA-hane/esphome-runtime-controller@dev
+      - source: github://n-IA-hane/esphome-runtime-controller@main
         components: [runtime_controller]
 
     runtime_controller:

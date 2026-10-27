@@ -1,4 +1,4 @@
 # Compatibility entrypoint. Application bindings are maintained with the device packages.
 packages:
-  binding: github://n-IA-hane/esphome-intercom/packages/features/music/runtime.yaml@dev
-  observer: github://n-IA-hane/esphome-intercom/packages/features/shared/player_observer.yaml@dev
+  binding: github://n-IA-hane/esphome-intercom/packages/features/music/runtime.yaml@main
+  observer: github://n-IA-hane/esphome-intercom/packages/features/shared/player_observer.yaml@main
