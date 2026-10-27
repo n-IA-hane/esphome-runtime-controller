@@ -2,51 +2,53 @@
 
 ## 2026.11.0-dev
 
-> **Attention: ESPHome 2026.10.0 or newer is required.**
->
-> ESPHome 2026.10 brings substantial audio changes, including several of our
-> accepted contributions. Thank you to the ESPHome team for your work, reviews
-> and accepted PRs! <3
->
-> We have aligned Audio Stack, ESP VoIP Stack, Runtime Controller and the
-> maintained device packages with this release. Older ESPHome versions are no
-> longer supported and their operation is not guaranteed. Upgrade the builder
-> before compiling the new firmware.
+Changes since stable **2026.10.1**.
 
+### Simpler source observation and presentation
 
-- Require **ESPHome 2026.10.0 or newer** alongside the coordinated Audio Stack
-  and VoIP Stack release. Observers, priorities, trigger behavior and audio
-  ownership are unchanged by the version-floor update.
+- Connect existing Voice Assistant, Micro Wake Word, media player, Wi-Fi, mute,
+  HA API and timer sources through `observe`. Source automation chains retain
+  user actions and delays; native observers replace only duplicate forwarding.
+- Use presentation triggers such as `on_music`, `on_ringing`, `on_call` and
+  `on_idle` with ordinary ESPHome actions. A simple observer configuration
+  infers the presentation profile; advanced activity/policy graphs remain valid.
+- Override presentation priorities separately from voice/call control and music
+  ducking. Existing lights and display components execute the selected actions
+  and effects.
+- Observe real media state transitions once: repeated metadata or volume
+  publications do not repeat controller actions. Initial state and actual
+  source transitions remain observable.
+- Add the optional `none` LED preset for custom mappings. Unmapped states keep
+  the previous light state; custom effects require their color and brightness.
+  Based on [#1](https://github.com/n-IA-hane/esphome-runtime-controller/pull/1).
 
-- Observe media state transitions once: repeated volume/metadata publications
-  no longer repeat media events and their controller actions. Initial state
-  replay, real transitions and the player's existing callbacks are preserved.
+### Memory, diagnostics and shared packages
 
-- Add simple source observation and natural presentation triggers such as
-  `on_music`, `on_ringing`, `on_call` and `on_idle`, using ordinary ESPHome actions.
-- Compose Voice Assistant, wake-word, timer and API observations into the source's
-  official automation chain without replacing user callbacks or delays.
-- Keep presentation priority overrides separate from audio and control policies.
-- Preserve the existing Full coordination rules and advanced configurations;
-  VoIP-only device packages remain on direct VoIP Stack callbacks.
-- Replace manual Full-package event forwarding with the shared observers.
+- Allocate event-rule storage once to the rules generated for each controller,
+  up to the existing 64-rule limit. Runtime event/action queues retain their
+  fixed capacities; event dispatch does not grow the rule table.
+- Optional debug dumps identify the activity that selected each policy through
+  the existing resolver. Detailed dumps require debug support at compile time.
+- Share application bindings with coordinated Intercom device packages. The
+  maintained YAMLs select functions through `firmware_features`; compatibility
+  adapters retain their documented prerequisites.
+- Preserve Full coordination and advanced configurations. VoIP-only maintained
+  firmware continues to use direct VoIP Stack callbacks without this controller.
 
-## 2026.10.2-dev
+### Breaking changes and migration
 
-- Share application bindings with the coordinated Intercom device packages.
-  Maintained devices select whole functions with `firmware_features`; legacy
-  adapters remain available with their documented prerequisites.
-- Show which activity selected each policy in optional debug state dumps, using
-  the existing resolver. The normal runtime keeps its existing ownership model.
-- Explain the reducer through music/call examples and progressively introduce
-  custom observers, priorities and outputs.
-- Use this preview with the matching Intercom `dev` packages. Start from an
-  updated board YAML when migrating an older FULL composition.
+- **ESPHome 2026.10.0 or newer is required.** Rebuild and upload with the matching
+  maintained firmware packages.
+- When opting into native observers, remove callbacks that only forward the
+  same events to this controller. Duplicate forwarding is rejected. Retain
+  hardware actions, text updates and unrelated user automations.
+- For a rewritten maintained device composition, start from its current YAML
+  rather than adding a legacy Full preset on top. Custom graphs and existing
+  `outputs.led` bindings remain supported.
 
-- Add the optional `none` LED preset for fully custom state mappings. Existing
-  presets retain their defaults. Unmapped states keep the previous light state;
-  custom effects need explicit color and brightness. Based on
-  [#1](https://github.com/n-IA-hane/esphome-runtime-controller/pull/1).
+See the [migration guide](MIGRATION.md). New presentation triggers invoke normal
+ESPHome actions; they do not create audio sources, render animation frames or
+download light effects.
 
 ## 2026.10.1
 

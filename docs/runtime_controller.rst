@@ -8,20 +8,31 @@ The ``runtime_controller`` component is a reducer for ESPHome devices where
 Voice Assistant, media playback, announcements, timers, mute state,
 connectivity and VoIP can overlap.
 
-Feature callbacks report facts such as ``media_playing`` or
-``voip:in_call``. The controller keeps the active facts, resolves each output
-policy by priority, and drives LEDs, globals or automations from the resolved
-snapshot.
+Native observers or explicit callbacks report facts such as ``media_playing``
+or ``voip:in_call``. The controller keeps those facts, resolves each output
+policy by priority and invokes existing ESPHome automations. Light and display
+components own their effects and rendering.
+
+Use ESPHome **2026.10.0 or newer**. The following fragment assumes an existing
+media player named ``speaker_media_player``. Its simple observer configuration
+infers the presentation profile; no manual event-forwarding callbacks are needed.
 
 .. code-block:: yaml
 
     external_components:
-      - source: github://n-IA-hane/esphome-runtime-controller@main
+      - source: github://n-IA-hane/esphome-runtime-controller@dev
         components: [runtime_controller]
 
     runtime_controller:
       id: runtime
-      profile: full_voice_voip
+      observe:
+        media_player: speaker_media_player
+      on_music:
+        then:
+          - logger.log: Music is the selected presentation
+      on_idle:
+        then:
+          - logger.log: The selected presentation is idle
 
 Configuration variables:
 ------------------------
@@ -29,8 +40,13 @@ Configuration variables:
 - **id** (*Optional*, :ref:`config-id`): Manually specify the controller ID.
 - **debug** (*Optional*, boolean): Log every processed event and activity mask.
   Defaults to ``false``.
-- **profile** (*Optional*, string): ``full_voice_voip`` installs the built-in
-  Voice Assistant, media, timer, mute, connectivity and VoIP model.
+- **profile** (*Optional*, string): Simple observers infer ``presentation``.
+  ``full_voice_voip`` installs the maintained coordination model and requires
+  its feature actions/bindings. Custom activity graphs remain supported.
+- **features** (*Optional*, list): Select rule families for the Full profile;
+  enabling rules does not instantiate their audio or UI components.
+- **observe** (*Optional*, mapping): Bind existing media, Wi-Fi, mute,
+  Voice Assistant, Micro Wake Word, API, timer and VoIP sources.
 - **observe.voip_stack** (*Optional*, :ref:`config-id`): VoIP Stack instance to
   observe when using the built-in profile.
 - **activities** (*Optional*, mapping): Named facts with priority, initial
@@ -49,6 +65,12 @@ Configuration variables:
   event for every explicitly declared activity. Defaults to ``true``; set it to
   ``false`` when all event names must be declared under ``events``.
 - **outputs.led** (*Optional*): Built-in LED renderer.
+- **presentation.priorities** (*Optional*, mapping): Override selected
+  presentation priorities without changing call control or music ducking.
+- **on_<state>** (*Optional*, automation): Invoke normal ESPHome actions when
+  a presentation such as ``music``, ``call`` or ``idle`` becomes selected.
+- **on_state_change** (*Optional*, automation): Selected-presentation transition
+  with string arguments ``previous`` and ``current``.
 - **output_script** (*Optional*, :ref:`config-id`): Script executed after each
   committed snapshot.
 - **state_outputs.activity_mask** / **state_outputs.sequence** (*Optional*):
@@ -97,6 +119,9 @@ Runs a top-level named action.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Logs the active set and resolved policy table.
+Detailed event and policy-source dumps require ``debug: true`` at compile time.
+The action is not automatically a Home Assistant service; expose it through a
+template button or an explicit API action when needed.
 
 ``runtime_controller.is_active`` Condition
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -106,12 +131,13 @@ Returns true when a named activity is active.
 Limits
 ------
 
-The reducer core uses fixed storage: 32 activities, 16 derived activities, 8
-policy channels, 8 policy entries per activity, 64 event rules, 16 named
-actions and 16 queued reentrant event/update batches. Rules allow 8 conditions
-per ``any``/``all``/``none`` list and 16 updates. Templatable ESPHome string
-actions can still create temporary strings, so this is a fixed reducer-state
-contract rather than a whole-firmware zero-allocation claim.
+Configuration limits are 32 activities, 16 derived activities, 8 policy channels,
+8 policy entries per activity, 64 event rules, 16 named actions and 16 queued
+reentrant event/update batches. Rules allow 8 conditions per
+``any``/``all``/``none`` list and 16 updates. Event-rule storage is allocated once
+for the generated rules; the queues and other configuration limits retain fixed
+capacities. Dispatch does not grow the rule table. Templatable ESPHome string
+actions can still create temporary strings.
 
 Events raised while dispatch is active are queued after the current commit. A
 drain processes only the batch present at entry; work generated by that batch

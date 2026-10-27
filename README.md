@@ -19,7 +19,7 @@ owns calls.
 
 Stable release: [2026.10.1](https://github.com/n-IA-hane/esphome-runtime-controller/releases/tag/v2026.10.1).
 Requires ESPHome **2026.10.0 or newer**. See the
-[changes since 2026.9.2](CHANGELOG.md) and [migration guide](MIGRATION.md).
+[changes since 2026.10.1](CHANGELOG.md) and [migration guide](MIGRATION.md).
 
 Native observers use the official ESPHome media player, Voice Assistant,
 Micro Wake Word and API automation interfaces. Replacement providers for those
@@ -45,7 +45,7 @@ instantiate Runtime Controller.
 ## Start with a maintained device profile
 
 For a complete intercom or voice device, start from an
-[Intercom YAML profile](https://github.com/n-IA-hane/esphome-intercom/tree/main/yamls).
+[Intercom YAML profile](https://github.com/n-IA-hane/esphome-intercom/tree/dev/yamls).
 It supplies the microphone, speaker, runtime packages and board-specific wiring.
 
 For your own controller, load the component below. A maintained device package
@@ -254,7 +254,7 @@ setting selects the voice, media and timer rule sets. Selecting a rule set and
 including the hardware that carries it out are separate steps.
 
 For a device with Voice Assistant but no phone, Intercom also provides a
-[voice-only runtime preset](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/presets/voice_runtime.yaml).
+[voice-only runtime preset](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/presets/voice_runtime.yaml).
 Supply its microphone, media player and mixer bindings as described in that
 package. Add wake-word hardware and callbacks separately if needed.
 

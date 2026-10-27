@@ -525,7 +525,7 @@ are still active. If the runtime says idle but a display still shows responding,
 examine the display binding. This separates missing completion events from
 rendering problems.
 
-| Fixed capacity | Limit |
+| Configuration or queue capacity | Limit |
 |---|---:|
 | Activities | 32 |
 | Resolved policies / policies per activity | 8 / 8 |
@@ -557,7 +557,7 @@ Optional VoIP, LED and output-script fields are removed when their build flags
 are absent. Wi-Fi, media and each mute listener have independent gates. No
 observer object is generated when none is selected. See the
 [feature cost table](../../../README.md#what-an-unused-feature-costs) for the
-difference between feature-specific memory and the fixed common rule tables.
+difference between feature-specific memory and the common configuration tables.
 
 An overflow is logged. A VoIP observation lost because the queue is full is
 followed by reconciliation with the latest call state after queued work drains;
@@ -566,7 +566,7 @@ callback ownership if overflows occur.
 
 ## Running the tests
 
-From the repository root, with Python, ESPHome, pytest and a C++17-capable `g++`
+From the repository root, with Python, ESPHome, pytest and a C++20-capable `g++`
 installed:
 
 ```bash

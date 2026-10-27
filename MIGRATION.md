@@ -62,7 +62,7 @@ controller component itself remains in this repository.
 
 Use the full presets with the complete Intercom profiles. For a smaller device,
 include `base.yaml` and the adapters you actually need. Intercom's
-[package guide](https://github.com/n-IA-hane/esphome-intercom/blob/main/packages/README.md)
+[package guide](https://github.com/n-IA-hane/esphome-intercom/blob/dev/packages/README.md)
 explains where the supporting globals, callbacks and scripts come from.
 
 For example, this fragment adds only the runtime's media binding to a device
@@ -70,8 +70,8 @@ that already supplies the player, mixer input and ducking global:
 
 ```yaml
 packages:
-  runtime_base: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/base.yaml@main
-  runtime_media: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/media.yaml@main
+  runtime_base: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/base.yaml@dev
+  runtime_media: github://n-IA-hane/esphome-runtime-controller/packages/runtime_controller/media.yaml@dev
 ```
 
 Load the `runtime_controller` external component as shown in the
