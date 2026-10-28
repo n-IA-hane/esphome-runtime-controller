@@ -221,7 +221,7 @@ def test_manual_stop_blocks_restart_until_va_end() -> None:
         package = (ROOT / "packages" / "runtime_controller" / package_name).read_text(
             encoding="utf-8"
         )
-        assert "github://n-IA-hane/esphome-intercom/packages/features/voice/runtime.yaml@dev" in package
+        assert "github://n-IA-hane/esphome-intercom/packages/features/voice/runtime.yaml@main" in package
         assert "runtime_voice_transition" not in package  # No second adapter implementation.
 
 
