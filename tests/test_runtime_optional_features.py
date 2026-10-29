@@ -45,7 +45,7 @@ def test_optional_components_remove_code_and_storage(tmp_path):
 #endif
 using esphome::runtime_controller::RuntimeController;
 struct Probe : RuntimeController {
-  static size_t storage_size() { return sizeof(Storage); }
+  static size_t storage_size() { Probe probe; return probe.configuration_storage_bytes_(); }
 };
 int main() {
   Probe r;
@@ -144,6 +144,6 @@ int main() {
             assert with_led[0] > object_size
             assert with_led[1] >= storage_size + 32 * 24
         if "VOIP" not in selected:
-            assert sizes[selected | {"VOIP"}][0] >= object_size + 128
+            assert 0 < sizes[selected | {"VOIP"}][0] - object_size < 128
         if "OUTPUT_SCRIPT" not in selected:
             assert sizes[selected | {"OUTPUT_SCRIPT"}][0] > object_size

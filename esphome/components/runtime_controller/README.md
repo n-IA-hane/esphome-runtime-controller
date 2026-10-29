@@ -13,7 +13,7 @@ Requires ESPHome 2026.10.0 or newer for the maintained packages.
 |---|---|---|
 | `id` | Generated | Use an explicit ID, such as `runtime`, when sending actions. |
 | `debug` | `false` | Compile detailed event and state logging. Required for detailed dumps. |
-| `storage_in_psram` | `false` | Put the controller's fixed tables and queues in PSRAM. Requires `psram:`. |
+| `storage_in_psram` | `false` | Put the controller's mutable tables and queues in PSRAM. Requires `psram:`. |
 | `profile` | Inferred `presentation` for a simple observer-only configuration | `presentation` supplies observation rules; `full_voice_voip` retains the maintained coordination rules. Explicit custom graphs remain supported. |
 | `features` | Inferred from observers in `presentation`; all three in `full_voice_voip` | Select voice, playback and timer rules. Full packages continue to supply their required actions. |
 | `activities` | `{}` | Facts, priorities and desired policy values. |
@@ -542,16 +542,19 @@ Event names must fit in 47 UTF-8 bytes. Generated VoIP activity names, including
 the prefix, must fit in 63 bytes. Invalid references, cyclic derived rules and
 schema capacity violations are rejected before compilation.
 
-The core allocates its configuration tables once, using internal memory by default.
-The event-rule table fits the rules generated for that instance, from zero to
-64. Pending event/action queues and the other configuration limits remain fixed;
-dispatch does not grow or allocate the rule table. Direct C++ configurations
-keep the historical 64-rule default unless `set_event_rule_capacity()` is called
-before the first configuration operation.
-`storage_in_psram: true` moves these tables and queues to PSRAM; it does not move
-audio buffers or task stacks. Templated action parameters may allocate temporary
-strings. A failed state allocation stops configuration rather than leaving a
-partially configured controller.
+Generated event rules use immutable, indexed tables. The remaining configuration
+tables are allocated once at their generated capacities, using internal memory
+by default. Both runtime queues retain all 16 entries; dispatch does not grow
+these tables. Direct C++ configurations keep the historical capacity defaults.
+`set_event_rule_capacity()` and `set_storage_capacities()` must precede the first
+configuration operation. A later rule-builder call materializes generated rules
+into mutable storage, preserving the C++ builder API.
+
+`storage_in_psram: true` moves mutable tables and queues to PSRAM; it does not
+move audio buffers or task stacks. Constant tables follow the SDK's rodata
+placement, which can itself use PSRAM on some targets. Templated action parameters
+may allocate temporary strings. A failed state allocation stops configuration
+rather than leaving a partially configured controller.
 
 Optional VoIP, LED and output-script fields are removed when their build flags
 are absent. Wi-Fi, media and each mute listener have independent gates. No

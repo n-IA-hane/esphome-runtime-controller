@@ -67,32 +67,95 @@ void RuntimeController::set_storage_in_psram(bool storage_in_psram) {
   (void) this->allocate_storage_();
 }
 
+void RuntimeController::set_storage_capacities(const StorageCapacities &capacities) {
+  const StorageCapacities maximum{};
+  if (this->storage_ != nullptr || capacities.activities > maximum.activities ||
+      capacities.actions > maximum.actions || capacities.event_triggers > maximum.event_triggers ||
+      capacities.event_updates > maximum.event_updates || capacities.derived > maximum.derived ||
+      capacities.policy_actions > maximum.policy_actions || capacities.policy_outputs > maximum.policy_outputs ||
+      capacities.policy_changes > maximum.policy_changes || capacities.policy_globals > maximum.policy_globals ||
+      capacities.led_states > maximum.led_states) {
+    ESP_LOGE(TAG, "Storage capacities must fit the supported limits and precede configuration");
+    this->mark_config_error_();
+    return;
+  }
+  this->storage_capacities_ = capacities;
+}
+
+template<typename T> static void add_table_bytes(size_t &bytes, size_t count) {
+  bytes = (bytes + alignof(T) - 1) & ~(alignof(T) - 1);
+  bytes += sizeof(T) * count;
+}
+
+size_t RuntimeController::configuration_storage_bytes_() const {
+  size_t bytes = sizeof(Storage);
+  const auto &c = this->storage_capacities_;
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
+  add_table_bytes<int16_t>(bytes, c.activities);
+#endif
+  add_table_bytes<ActivityConfig>(bytes, c.activities);
+  add_table_bytes<NamedAction>(bytes, c.actions);
+  add_table_bytes<NamedAction>(bytes, c.event_triggers);
+  add_table_bytes<EventActivity>(bytes, c.event_updates);
+  add_table_bytes<DerivedActivity>(bytes, c.derived);
+  add_table_bytes<PolicyValueAction>(bytes, c.policy_actions);
+  add_table_bytes<PolicyOutput>(bytes, c.policy_outputs);
+  add_table_bytes<PolicyChangeTrigger>(bytes, c.policy_changes);
+  add_table_bytes<PolicyGlobalOutput>(bytes, c.policy_globals);
+#ifdef USE_RUNTIME_CONTROLLER_LED
+  add_table_bytes<LedState>(bytes, c.led_states);
+#endif
+  return bytes;
+}
+
 bool RuntimeController::allocate_storage_() {
-  // Allocation/configuration failure is sticky. Later codegen calls must not
-  // dereference missing storage or construct a partially configured controller.
   if (this->config_error_)
     return false;
   if (this->storage_ != nullptr)
     return true;
-
-  const uint8_t flags = this->storage_in_psram_ ? RAMAllocator<Storage>::ALLOC_EXTERNAL
-                                                : RAMAllocator<Storage>::ALLOC_INTERNAL;
-  RAMAllocator<Storage> allocator(flags);
-  Storage *storage = allocator.allocate(1);
-  if (storage == nullptr) {
-    ESP_LOGE(TAG, "Failed to allocate %u bytes of runtime storage in %s RAM", static_cast<unsigned>(sizeof(Storage)),
-             this->storage_in_psram_ ? "external" : "internal");
+  const uint8_t flags = this->storage_in_psram_ ? RAMAllocator<uint8_t>::ALLOC_EXTERNAL
+                                              : RAMAllocator<uint8_t>::ALLOC_INTERNAL;
+  const size_t bytes = this->configuration_storage_bytes_();
+  RAMAllocator<uint8_t> allocator(flags);
+  uint8_t *memory = allocator.allocate(bytes);
+  if (memory == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate %u bytes of runtime storage", static_cast<unsigned>(bytes));
     this->mark_config_error_();
     return false;
   }
-  new (storage) Storage{};
+  Storage *storage = new (memory) Storage{};
+  storage->allocated_bytes = bytes;
+  size_t offset = sizeof(Storage);
+  auto bind = [memory, &offset](auto &table, size_t count) {
+    using T = std::remove_pointer_t<decltype(table.entries)>;
+    offset = (offset + alignof(T) - 1) & ~(alignof(T) - 1);
+    table = {reinterpret_cast<T *>(memory + offset), count};
+    for (size_t i = 0; i < count; ++i)
+      new (table.entries + i) T{};
+    offset += sizeof(T) * count;
+  };
+  const auto &c = this->storage_capacities_;
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
+  bind(storage->presentation_priorities, c.activities);
+#endif
+  bind(storage->activities, c.activities);
+  bind(storage->actions, c.actions);
+  bind(storage->event_triggers, c.event_triggers);
+  bind(storage->event_updates, c.event_updates);
+  bind(storage->derived_activities, c.derived);
+  bind(storage->policy_value_actions, c.policy_actions);
+  bind(storage->policy_outputs, c.policy_outputs);
+  bind(storage->policy_change_triggers, c.policy_changes);
+  bind(storage->policy_global_outputs, c.policy_globals);
+#ifdef USE_RUNTIME_CONTROLLER_LED
+  bind(storage->led_states, c.led_states);
+#endif
   if (this->event_rule_capacity_ > 0) {
     RAMAllocator<EventRule> rule_allocator(flags);
     EventRule *rules = rule_allocator.allocate(this->event_rule_capacity_);
     if (rules == nullptr) {
       storage->~Storage();
-      allocator.deallocate(storage, 1);
-      ESP_LOGE(TAG, "Failed to allocate %u event rules", static_cast<unsigned>(this->event_rule_capacity_));
+      allocator.deallocate(memory, bytes);
       this->mark_config_error_();
       return false;
     }
@@ -111,13 +174,89 @@ void RuntimeController::release_storage_() {
   if (rules.entries != nullptr) {
     for (size_t i = 0; i < rules.capacity; ++i)
       rules.entries[i].~EventRule();
-    RAMAllocator<EventRule> rule_allocator;
-    rule_allocator.deallocate(rules.entries, rules.capacity);
+    RAMAllocator<EventRule> allocator;
+    allocator.deallocate(rules.entries, rules.capacity);
   }
+  const size_t bytes = this->storage_->allocated_bytes;
   this->storage_->~Storage();
-  RAMAllocator<Storage> allocator;
-  allocator.deallocate(this->storage_, 1);
+  RAMAllocator<uint8_t> allocator;
+  allocator.deallocate(reinterpret_cast<uint8_t *>(this->storage_), bytes);
   this->storage_ = nullptr;
+}
+
+void RuntimeController::set_static_event_rules(const StaticEventRule *rules, size_t count) {
+  if (!this->allocate_storage_())
+    return;
+  if (count > 64 || (count != 0 && rules == nullptr) || this->event_rule_count_ != 0) {
+    this->mark_config_error_();
+    return;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    const auto &rule = rules[i];
+    const size_t conditions = rule.any_count + rule.all_count + rule.none_count;
+    if (rule.update_count > 16 || rule.any_count > 8 || rule.all_count > 8 || rule.none_count > 8 ||
+        (rule.update_count && rule.updates == nullptr) || (conditions && rule.conditions == nullptr)) {
+      this->mark_config_error_();
+      return;
+    }
+    for (size_t j = 0; j < rule.update_count; ++j)
+      if (rule.updates[j].index >= this->activity_count_) {
+        this->mark_config_error_();
+        return;
+      }
+    for (size_t j = 0; j < conditions; ++j)
+      if (rule.conditions[j] >= this->activity_count_) {
+        this->mark_config_error_();
+        return;
+      }
+  }
+  this->storage_->static_rules = rules;
+  this->event_rule_count_ = count;
+}
+
+bool RuntimeController::materialize_event_rules_() {
+  if (this->storage_->static_rules == nullptr)
+    return true;
+  const uint8_t flags = this->storage_in_psram_ ? RAMAllocator<EventRule>::ALLOC_EXTERNAL
+                                              : RAMAllocator<EventRule>::ALLOC_INTERNAL;
+  RAMAllocator<EventRule> allocator(flags);
+  EventRule *rules = allocator.allocate(64);
+  if (rules == nullptr) {
+    this->mark_config_error_();
+    return false;
+  }
+  for (size_t i = 0; i < 64; ++i)
+    new (rules + i) EventRule{};
+  for (size_t i = 0; i < this->event_rule_count_; ++i) {
+    const auto &source = this->storage_->static_rules[i];
+    auto &dest = rules[i];
+    dest.event = source.event;
+    dest.action = source.action;
+    dest.update_count = source.update_count;
+    for (size_t j = 0; j < source.update_count; ++j) {
+      const auto &update = source.updates[j];
+      dest.updates[j] = {this->storage_->activities[update.index].name, update.active, update.index};
+    }
+    size_t offset = 0;
+    auto copy = [this, &source, &offset](auto &names, auto &indices, size_t count) {
+      for (size_t j = 0; j < count; ++j) {
+        indices[j] = source.conditions[offset++];
+        names[j] = this->storage_->activities[indices[j]].name;
+      }
+    };
+    dest.any_count = source.any_count;
+    dest.all_count = source.all_count;
+    dest.none_count = source.none_count;
+    copy(dest.any_active, dest.any_active_index, dest.any_count);
+    copy(dest.all_active, dest.all_active_index, dest.all_count);
+    copy(dest.none_active, dest.none_active_index, dest.none_count);
+  }
+  auto &previous = this->storage_->event_rules;
+  if (previous.entries != nullptr)
+    allocator.deallocate(previous.entries, previous.capacity);
+  previous = {rules, 64};
+  this->storage_->static_rules = nullptr;
+  return true;
 }
 
 void RuntimeController::setup() {
@@ -173,13 +312,14 @@ void RuntimeController::dump_config() {
   ESP_LOGCONFIG(TAG, "  Actions: %u/%u", static_cast<unsigned>(this->action_count_),
                 static_cast<unsigned>(MAX_ACTIONS));
   ESP_LOGCONFIG(TAG, "  Event rules: %u/%u", static_cast<unsigned>(this->event_rule_count_),
-                static_cast<unsigned>(this->storage_->event_rules.size()));
+                static_cast<unsigned>(this->storage_->static_rules != nullptr ? this->event_rule_count_
+                                                                           : this->storage_->event_rules.size()));
   ESP_LOGCONFIG(TAG, "  Event updates: %u/%u", static_cast<unsigned>(this->event_update_count_),
                 static_cast<unsigned>(this->storage_->event_updates.size()));
   ESP_LOGCONFIG(TAG, "  Derived activities: %u/%u", static_cast<unsigned>(this->derived_activity_count_),
                 static_cast<unsigned>(this->storage_->derived_activities.size()));
   ESP_LOGCONFIG(TAG, "  Storage: %u bytes in %s RAM",
-                static_cast<unsigned>(sizeof(Storage) + this->storage_->event_rules.size() * sizeof(EventRule)),
+                static_cast<unsigned>(this->storage_->allocated_bytes + this->storage_->event_rules.size() * sizeof(EventRule)),
                 this->storage_in_psram_ ? "external" : "internal");
   ESP_LOGCONFIG(TAG, "  Debug: %s", YESNO(this->debug_));
   ESP_LOGCONFIG(TAG, "  Config valid: %s", YESNO(!this->config_error_));
@@ -225,7 +365,7 @@ void RuntimeController::add_activity(const char *name, int16_t priority, bool in
     return;
   if (name == nullptr || name[0] == '\0')
     return;
-  if (this->activity_count_ >= MAX_ACTIVITIES) {
+  if (this->activity_count_ >= this->storage_->activities.size()) {
     ESP_LOGE(TAG, "Cannot add activity '%s': maximum %u activities reached", name,
              static_cast<unsigned>(MAX_ACTIVITIES));
     this->mark_config_error_();
@@ -282,7 +422,7 @@ void RuntimeController::add_event_activity(const char *event, const char *activi
 }
 
 void RuntimeController::add_event_rule(const char *event, const char *action) {
-  if (!this->allocate_storage_())
+  if (!this->allocate_storage_() || !this->materialize_event_rules_())
     return;
   if (event == nullptr || event[0] == '\0')
     return;
@@ -295,7 +435,7 @@ void RuntimeController::add_event_rule(const char *event, const char *action) {
 }
 
 void RuntimeController::add_event_rule_update(const char *activity, bool active) {
-  if (!this->allocate_storage_())
+  if (!this->allocate_storage_() || !this->materialize_event_rules_())
     return;
   if (this->event_rule_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
@@ -310,7 +450,7 @@ void RuntimeController::add_event_rule_update(const char *activity, bool active)
 }
 
 void RuntimeController::add_event_rule_any_active(const char *activity) {
-  if (!this->allocate_storage_())
+  if (!this->allocate_storage_() || !this->materialize_event_rules_())
     return;
   if (this->event_rule_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
@@ -326,7 +466,7 @@ void RuntimeController::add_event_rule_any_active(const char *activity) {
 }
 
 void RuntimeController::add_event_rule_all_active(const char *activity) {
-  if (!this->allocate_storage_())
+  if (!this->allocate_storage_() || !this->materialize_event_rules_())
     return;
   if (this->event_rule_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
@@ -342,7 +482,7 @@ void RuntimeController::add_event_rule_all_active(const char *activity) {
 }
 
 void RuntimeController::add_event_rule_none_active(const char *activity) {
-  if (!this->allocate_storage_())
+  if (!this->allocate_storage_() || !this->materialize_event_rules_())
     return;
   if (this->event_rule_count_ == 0 || activity == nullptr || activity[0] == '\0')
     return;
@@ -426,7 +566,7 @@ void RuntimeController::add_action_trigger(const char *name, Trigger<> *trigger)
     return;
   if (name == nullptr || name[0] == '\0' || trigger == nullptr)
     return;
-  if (this->action_count_ >= MAX_ACTIONS) {
+  if (this->action_count_ >= this->storage_->actions.size()) {
     ESP_LOGE(TAG, "Cannot add action '%s': maximum %u actions reached", name, static_cast<unsigned>(MAX_ACTIONS));
     this->mark_config_error_();
     return;
@@ -439,7 +579,7 @@ void RuntimeController::add_event_trigger(const char *name, Trigger<> *trigger) 
     return;
   if (name == nullptr || name[0] == '\0' || trigger == nullptr)
     return;
-  if (this->event_trigger_count_ >= MAX_ACTIONS) {
+  if (this->event_trigger_count_ >= this->storage_->event_triggers.size()) {
     ESP_LOGE(TAG, "Cannot add event trigger '%s': maximum %u triggers reached", name,
              static_cast<unsigned>(MAX_ACTIONS));
     this->mark_config_error_();
@@ -555,20 +695,21 @@ void RuntimeController::event(const char *name) {
   bool event_known = false;
 
   for (size_t i = 0; i < this->event_rule_count_; i++) {
-    auto &rule = this->storage_->event_rules[i];
-    if (!str_eq(rule.event, name))
+    const auto *static_rules = this->storage_->static_rules;
+    const char *event = static_rules != nullptr ? static_rules[i].event : this->storage_->event_rules[i].event;
+    const char *action = static_rules != nullptr ? static_rules[i].action : this->storage_->event_rules[i].action;
+    if (!str_eq(event, name))
       continue;
     event_known = true;
-    if (!this->rule_matches_(rule))
+    if (!this->rule_matches_(i))
       continue;
-    for (size_t j = 0; j < rule.update_count; j++)
-      changed |= this->apply_activity_update_(rule.updates[j]);
+    changed |= this->apply_rule_updates_(i);
     changed |= this->apply_derived_activities_();
     if (changed) {
       this->apply_generic_outputs_();
       this->commit_outputs_(name != nullptr ? name : "event", old_mask, old_policies);
     }
-    this->run_named_action_(rule.action);
+    this->run_named_action_(action);
     this->run_event_trigger_(name);
     return;
   }
@@ -673,7 +814,8 @@ void RuntimeController::dump_state(const char *reason) {
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
   if (this->voip_ != nullptr) {
     ESP_LOGI(TAG, "  observed voip=%s activity=%s", this->voip_->get_call_state_str(),
-             this->last_voip_activity_[0] != '\0' ? this->last_voip_activity_ : "-");
+             this->last_voip_activity_index_ != INVALID_ACTIVITY && this->last_voip_activity_index_ < this->activity_count_
+                 ? this->storage_->activities[this->last_voip_activity_index_].name : "-");
   }
 #endif
 }
@@ -717,8 +859,37 @@ template<typename Matcher> bool RuntimeController::matches_(const Matcher &match
   return true;
 }
 
-bool RuntimeController::rule_matches_(const RuntimeController::EventRule &rule) const {
-  return this->matches_(rule);
+bool RuntimeController::rule_matches_(size_t index) const {
+  if (this->storage_->static_rules == nullptr)
+    return this->matches_(this->storage_->event_rules[index]);
+  const auto &rule = this->storage_->static_rules[index];
+  size_t offset = 0;
+  bool any = rule.any_count == 0;
+  for (size_t i = 0; i < rule.any_count; ++i)
+    any |= this->storage_->activities[rule.conditions[offset++]].active;
+  if (!any)
+    return false;
+  for (size_t i = 0; i < rule.all_count; ++i)
+    if (!this->storage_->activities[rule.conditions[offset++]].active)
+      return false;
+  for (size_t i = 0; i < rule.none_count; ++i)
+    if (this->storage_->activities[rule.conditions[offset++]].active)
+      return false;
+  return true;
+}
+
+bool RuntimeController::apply_rule_updates_(size_t index) {
+  bool changed = false;
+  if (this->storage_->static_rules != nullptr) {
+    const auto &rule = this->storage_->static_rules[index];
+    for (size_t i = 0; i < rule.update_count; ++i)
+      changed |= this->apply_activity_update_by_index_(rule.updates[i].index, rule.updates[i].active);
+  } else {
+    const auto &rule = this->storage_->event_rules[index];
+    for (size_t i = 0; i < rule.update_count; ++i)
+      changed |= this->apply_activity_update_(rule.updates[i]);
+  }
+  return changed;
 }
 
 bool RuntimeController::derived_matches_(const RuntimeController::DerivedActivity &derived) const {
@@ -920,25 +1091,26 @@ void RuntimeController::commit_outputs_(const char *reason, uint32_t old_mask, c
 }
 
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
-void RuntimeController::build_voip_activity_name_(const char *state) {
-  this->voip_activity_[0] = '\0';
-  if (this->voip_activity_prefix_ == nullptr || this->voip_activity_prefix_[0] == '\0' || state == nullptr ||
-      state[0] == '\0')
-    return;
-  const int written = std::snprintf(this->voip_activity_, sizeof(this->voip_activity_), "%s%s",
-                                    this->voip_activity_prefix_, state);
-  if (written < 0 || static_cast<size_t>(written) >= sizeof(this->voip_activity_)) {
-    ESP_LOGE(TAG, "VoIP activity name is too long; ignoring state '%s'", state);
-    this->voip_activity_[0] = '\0';
-  }
-}
-
 uint8_t RuntimeController::capture_voip_activity_() {
-  if (this->voip_ == nullptr || this->voip_activity_prefix_ == nullptr)
+  if (this->storage_ == nullptr || this->voip_ == nullptr || this->voip_activity_prefix_ == nullptr ||
+      this->voip_activity_prefix_[0] == '\0')
     return INVALID_ACTIVITY;
-
-  this->build_voip_activity_name_(this->voip_->get_call_state_str());
-  return activity_index_or_invalid(this->find_activity_(this->voip_activity_));
+  const char *state = this->voip_->get_call_state_str();
+  if (state == nullptr || state[0] == '\0')
+    return INVALID_ACTIVITY;
+  const size_t prefix_size = std::strlen(this->voip_activity_prefix_);
+  const size_t state_size = std::strlen(state);
+  if (prefix_size > 63 || state_size > 63 - prefix_size) {
+    ESP_LOGE(TAG, "VoIP activity name is too long; ignoring state '%s'", state);
+    return INVALID_ACTIVITY;
+  }
+  for (size_t index = 0; index < this->activity_count_; ++index) {
+    const char *name = this->storage_->activities[index].name;
+    if (name != nullptr && std::strncmp(name, this->voip_activity_prefix_, prefix_size) == 0 &&
+        std::strcmp(name + prefix_size, state) == 0)
+      return static_cast<uint8_t>(index);
+  }
+  return INVALID_ACTIVITY;
 }
 
 bool RuntimeController::sync_voip_activity_(uint8_t index) {
@@ -949,10 +1121,6 @@ bool RuntimeController::sync_voip_activity_(uint8_t index) {
   changed |= this->apply_activity_update_by_index_(index, true);
 
   this->last_voip_activity_index_ = index;
-  const char *name = index != INVALID_ACTIVITY && index < this->activity_count_
-                         ? this->storage_->activities[index].name
-                         : "";
-  std::snprintf(this->last_voip_activity_, sizeof(this->last_voip_activity_), "%s", name);
   return changed;
 }
 
@@ -1095,7 +1263,7 @@ bool RuntimeController::enqueue_event_(const char *name) {
     return false;
   }
   auto &event = this->storage_->pending_events[this->pending_event_count_];
-  event.name[0] = '\0';
+  event.reset_name();
   event.update_count = 0;
   event.kind = PendingEventKind::EVENT;
   const int written = std::snprintf(event.name, sizeof(event.name), "%s", name);
@@ -1124,7 +1292,7 @@ bool RuntimeController::enqueue_activity_updates_(const ActivityUpdate *updates,
     return false;
   }
   auto &event = this->storage_->pending_events[this->pending_event_count_++];
-  event.name[0] = '\0';
+  event.reset_updates();
   event.update_count = 0;
   event.kind = PendingEventKind::SET_ACTIVITIES;
   const size_t bounded_count = count > std::size(event.updates) ? std::size(event.updates) : count;
@@ -1165,7 +1333,6 @@ bool RuntimeController::enqueue_voip_activity_(uint8_t index) {
   }
   auto &event = this->storage_->pending_events[this->pending_event_count_++];
   event.kind = PendingEventKind::VOIP_ACTIVITY;
-  event.name[0] = '\0';
   event.update_count = 0;
   event.voip_activity_index = index;
   this->enable_loop_soon_any_context();
@@ -1188,13 +1355,13 @@ void RuntimeController::drain_pending_events_() {
       this->storage_->pending_events[i - 1] = this->storage_->pending_events[i];
     auto &last = this->storage_->pending_events[--this->pending_event_count_];
     last.kind = PendingEventKind::EVENT;
-    last.name[0] = '\0';
+    last.reset_name();
     last.update_count = 0;
 
     if (event.kind == PendingEventKind::EVENT) {
       this->event(event.name);
     } else if (event.kind == PendingEventKind::SET_ACTIVITIES) {
-      this->set_activities(event.updates, event.update_count);
+      this->set_activities(event.updates.data(), event.update_count);
     }
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
     else {

@@ -42,6 +42,9 @@ runtime_controller:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     main = (tmp_path / "build/src/main.cpp").read_text()
-    assert re.search(rf"controller->set_event_rule_capacity\({count}\);", main)
-    assert len(re.findall(r"controller->add_event_rule\(", main)) == count
+    assert re.search(r"controller->set_event_rule_capacity\(0\);", main)
+    assert "controller->add_event_rule(" not in main
+    if count:
+        assert f"controller->set_static_event_rules(controller_rules, {count});" in main
+    assert "controller->set_storage_capacities(" in main
     assert main.index("controller->set_event_rule_capacity(") < main.index("controller->set_storage_in_psram(")

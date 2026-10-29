@@ -20,9 +20,18 @@ using esphome::runtime_controller::RuntimeController;
 class StorageProbe : public RuntimeController {
  public:
   size_t expected_rule_storage_bytes(size_t rules) const {
-    return sizeof(Storage) - sizeof(this->storage_->event_rules) + sizeof(void *) + sizeof(size_t) +
-           sizeof(EventRule) * rules;
+    size_t bytes = sizeof(Storage) + 32 * sizeof(ActivityConfig) + 32 * sizeof(NamedAction) +
+                   64 * sizeof(EventActivity) + 16 * sizeof(DerivedActivity) + 32 * sizeof(PolicyValueAction) +
+                   64 * sizeof(PolicyOutput) + 8 * sizeof(PolicyChangeTrigger) + 8 * sizeof(PolicyGlobalOutput);
+#ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
+    bytes += 32 * sizeof(int16_t);
+#endif
+#ifdef USE_RUNTIME_CONTROLLER_LED
+    bytes += 32 * sizeof(LedState);
+#endif
+    return bytes + sizeof(EventRule) * rules;
   }
+  size_t expected_two_activity_bytes() const { return sizeof(Storage) + 2 * sizeof(ActivityConfig); }
 };
 
 template<typename T, typename = void> struct HasRuleCapacity : std::false_type {};
@@ -600,10 +609,113 @@ static void test_voip_overflow_reconciles_latest_state() {
 }
 #endif
 
+static void test_static_rules_and_exact_storage() {
+  using Update = RuntimeController::IndexedUpdate;
+  using Rule = RuntimeController::StaticEventRule;
+  static constexpr Update updates[] = {{0, true}, {1, true}, {0, false}};
+  static constexpr Update finish[] = {{1, false}, {0, true}};
+  static constexpr uint8_t guards[] = {1, 1, 0};
+  static constexpr Rule rules[] = {
+    {"go", "", updates, nullptr, 3, 0, 0, 0},
+    {"finish", "", finish, guards, 2, 1, 1, 1},
+  };
+  const size_t live_before = esphome::testing::allocated_bytes - esphome::testing::released_bytes;
+  {
+    StorageProbe runtime;
+    const size_t allocated_before = esphome::testing::allocated_bytes;
+    runtime.set_event_rule_capacity(0);
+    runtime.set_storage_capacities({2, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+    runtime.set_storage_in_psram(false);
+    assert(esphome::testing::allocated_bytes - allocated_before == runtime.expected_two_activity_bytes());
+    runtime.add_activity("a", 1, false);
+    runtime.add_activity("b", 1, false);
+    runtime.set_activity_group("a", "phase");
+    runtime.set_activity_group("b", "phase");
+    runtime.set_static_event_rules(rules, 2);
+    runtime.setup();
+    assert(!runtime.is_failed());
+    const unsigned attempts = esphome::testing::allocation_attempts;
+    runtime.event("finish");
+    assert(!runtime.is_activity_active("a") && !runtime.is_activity_active("b"));
+    runtime.event("go");
+    assert(!runtime.is_activity_active("a") && runtime.is_activity_active("b"));
+    runtime.event("finish");
+    assert(runtime.is_activity_active("a") && !runtime.is_activity_active("b"));
+    assert(esphome::testing::allocation_attempts == attempts);
+    // Legacy builder mutations remain supported, including changing the last static rule.
+    runtime.add_event_rule_update("a", false);
+    runtime.add_event_rule("later", "");
+    runtime.add_event_rule_update("b", true);
+    runtime.event("later");
+    assert(!runtime.is_activity_active("a") && runtime.is_activity_active("b"));
+    runtime.event("finish");
+    assert(!runtime.is_activity_active("a") && !runtime.is_activity_active("b"));
+  }
+  assert(esphome::testing::allocated_bytes - esphome::testing::released_bytes == live_before);
+  // Reject invalid indices before the reducer can access them.
+  static constexpr Update invalid[] = {{2, true}};
+  static constexpr Rule invalid_rules[] = {{"bad", "", invalid, nullptr, 1, 0, 0, 0}};
+  RuntimeController invalid_runtime;
+  invalid_runtime.set_event_rule_capacity(0);
+  invalid_runtime.add_activity("only", 0, false);
+  invalid_runtime.set_static_event_rules(invalid_rules, 1);
+  invalid_runtime.setup();
+  assert(invalid_runtime.is_failed());
+}
+
+static void test_static_rules_materialization_failure() {
+  using Rule = RuntimeController::StaticEventRule;
+  static constexpr Rule rules[] = {{"go", "", nullptr, nullptr, 0, 0, 0, 0}};
+  const size_t live_before = esphome::testing::allocated_bytes - esphome::testing::released_bytes;
+  {
+    RuntimeController runtime;
+    runtime.set_event_rule_capacity(0);
+    runtime.set_static_event_rules(rules, 1);
+    esphome::testing::fail_on_attempt = esphome::testing::allocation_attempts + 1;
+    runtime.add_event_rule("later", "");
+    esphome::testing::fail_on_attempt = 0;
+    runtime.setup();
+    assert(runtime.is_failed());
+  }
+  assert(esphome::testing::allocated_bytes - esphome::testing::released_bytes == live_before);
+}
+
+#ifdef USE_RUNTIME_CONTROLLER_VOIP
+static void test_voip_name_boundaries() {
+  class Probe : public RuntimeController { public: uint8_t capture() { return this->capture_voip_activity_(); } };
+  for (size_t length = 0; length <= 70; ++length) {
+    const std::string prefix(length, 'p'), name = prefix + "idle";
+    esphome::voip_stack::VoipStack phone;
+    Probe runtime;
+    runtime.set_voip(&phone);
+    runtime.set_voip_activity_prefix(prefix.c_str());
+    runtime.add_activity("x", 0, false);
+    runtime.add_activity(name.c_str(), 1, false);
+    assert(runtime.capture() == (length > 0 && length + 4 <= 63 ? 1 : RuntimeController::INVALID_ACTIVITY));
+  }
+  const std::string prefix = "电话:", name = prefix + "idle";
+  esphome::voip_stack::VoipStack phone;
+  Probe runtime;
+  runtime.set_voip(&phone);
+  runtime.set_voip_activity_prefix(prefix.c_str());
+  runtime.add_activity("电话", 0, false);
+  runtime.add_activity(name.c_str(), 1, false);
+  assert(runtime.capture() == 1);
+  phone.state = "missing";
+  assert(runtime.capture() == RuntimeController::INVALID_ACTIVITY);
+  runtime.set_voip_activity_prefix(nullptr);
+  assert(runtime.capture() == RuntimeController::INVALID_ACTIVITY);
+}
+#endif
+
 int main(int argc, char **argv) {
   assert(argc == 2);
   const std::string test = argv[1];
-  if (test == "rule_storage")
+  if (test == "static_rules")
+    test_static_rules_and_exact_storage();
+  else if (test == "static_failure")
+    test_static_rules_materialization_failure();
+  else if (test == "rule_storage")
     test_rule_storage_matches_configuration();
   else if (test == "snapshot")
     test_snapshot_publication();
@@ -624,6 +736,8 @@ int main(int argc, char **argv) {
   else if (test == "allocation_failure")
     test_allocation_failure_is_fail_closed();
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
+  else if (test == "voip_names")
+    test_voip_name_boundaries();
   else if (test == "voip_reentrancy")
     test_voip_observer_is_transactional();
   else if (test == "voip_capture")

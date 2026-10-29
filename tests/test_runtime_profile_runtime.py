@@ -14,7 +14,7 @@ def _list(value):
     return value if isinstance(value, list) else [value]
 
 
-def _profile_cpp():
+def _profile_cpp(static_rules=False):
     """Read literal profile definitions without importing ESPHome codegen."""
     from test_runtime_controller_contract import _load_component_module
 
@@ -25,8 +25,11 @@ def _profile_cpp():
         '#include "runtime_controller.h"',
         "using esphome::runtime_controller::RuntimeController;",
         "void load_profile(RuntimeController &r) {",
+        "r.set_event_rule_capacity(0);" if static_rules else "r.set_event_rule_capacity(64);",
         "r.set_storage_in_psram(false);",
     ]
+    activity_indices = {name: index for index, name in enumerate(values["FULL_VOICE_VOIP_ACTIVITIES"])}
+    static_rows = []
     for name, config in values["FULL_VOICE_VOIP_ACTIVITIES"].items():
         initial = str(config.get("initial", False)).lower()
         lines.append(
@@ -52,6 +55,22 @@ def _profile_cpp():
                 {key: value for key, value in config.items() if key != "cases"}
             )
         for rule in rules:
+            if static_rules:
+                updates = [(activity_indices[item], True) for item in _list(rule.get("activate", []))]
+                updates += [(activity_indices[item], False) for item in _list(rule.get("deactivate", []))]
+                conditions = [_list(rule.get(key, [])) for key in ("any", "all", "none")]
+                suffix = len(static_rows)
+                update_name = f"updates_{suffix}" if updates else "nullptr"
+                condition_name = f"conditions_{suffix}" if any(conditions) else "nullptr"
+                if updates:
+                    content = ",".join(f"{{{index},{str(active).lower()}}}" for index, active in updates)
+                    lines.append(f"static constexpr RuntimeController::IndexedUpdate {update_name}[] = {{{content}}};")
+                if any(conditions):
+                    content = ",".join(str(activity_indices[item]) for group in conditions for item in group)
+                    lines.append(f"static constexpr uint8_t {condition_name}[] = {{{content}}};")
+                static_rows.append("{" + ",".join((quote(name), quote(rule.get("action", "")),
+                    update_name, condition_name, str(len(updates)), *(str(len(group)) for group in conditions))) + "}")
+                continue
             lines.append(
                 f"r.add_event_rule({quote(name)}, {quote(rule.get('action', ''))});"
             )
@@ -65,15 +84,18 @@ def _profile_cpp():
                     lines.append(
                         f"r.add_event_rule_update({quote(activity)}, {enabled});"
                     )
+    if static_rules:
+        lines.append("static constexpr RuntimeController::StaticEventRule rules[] = {" + ",".join(static_rows) + "};")
+        lines.append(f"r.set_static_event_rules(rules, {len(static_rows)});")
     return "\n".join(lines) + "\nr.setup();\n}\n"
 
 
-@pytest.fixture(scope="module")
-def profile_binary(tmp_path_factory):
+@pytest.fixture(scope="module", params=[False, True], ids=["builder", "static"])
+def profile_binary(request, tmp_path_factory):
     path = tmp_path_factory.mktemp("profile-runtime")
     cpp = path / "profile.cpp"
     cpp.write_text(
-        _profile_cpp()
+        _profile_cpp(request.param)
         + r"""
 #include <cassert>
 #include <cstring>

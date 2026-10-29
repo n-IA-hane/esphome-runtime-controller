@@ -12,6 +12,8 @@ COMPONENT = ROOT / "esphome" / "components" / "runtime_controller"
 FIXTURES = ROOT / "tests" / "fixtures" / "core"
 CORE_CASES = (
     "rule_storage",
+    "static_rules",
+    "static_failure",
     "snapshot",
     "event_order",
     "nested_setters",
@@ -22,7 +24,7 @@ CORE_CASES = (
     "derived",
     "allocation_failure",
 )
-VOIP_CASES = ("voip_reentrancy", "voip_capture", "voip_overflow")
+VOIP_CASES = ("voip_names", "voip_reentrancy", "voip_capture", "voip_overflow")
 
 
 @pytest.fixture(scope="session")

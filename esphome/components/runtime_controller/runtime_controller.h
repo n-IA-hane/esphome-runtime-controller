@@ -9,6 +9,8 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <type_traits>
+#include <new>
 
 namespace esphome {
 namespace script {
@@ -46,6 +48,23 @@ class RuntimeController : public Component {
   // Codegen sets the exact capacity before any configuration allocates storage.
   // Direct C++ users retain the historical 64-rule default.
   void set_event_rule_capacity(size_t capacity);
+  struct StorageCapacities {
+    uint8_t activities{32}, actions{16}, event_triggers{16}, event_updates{64}, derived{16};
+    uint8_t policy_actions{32}, policy_outputs{64}, policy_changes{8}, policy_globals{8}, led_states{32};
+  };
+  // Set before storage allocation; direct C++ callers retain the full defaults.
+  void set_storage_capacities(const StorageCapacities &capacities);
+  struct IndexedUpdate { uint8_t index; bool active; };
+  struct StaticEventRule {
+    const char *event;
+    const char *action;
+    const IndexedUpdate *updates;
+    const uint8_t *conditions;
+    uint8_t update_count, any_count, all_count, none_count;
+  };
+  // Tables have static lifetime. A later builder mutation materializes mutable rules.
+  void set_static_event_rules(const StaticEventRule *rules, size_t count);
+
 #ifdef USE_RUNTIME_CONTROLLER_OUTPUT_SCRIPT
   void set_output_script(script::Script<> *script) { this->output_script_ = script; }
 #endif
@@ -160,13 +179,14 @@ class RuntimeController : public Component {
   uint8_t capture_voip_activity_();
   bool sync_voip_activity_(uint8_t index);
   void process_voip_activity_(uint8_t index);
-  void build_voip_activity_name_(const char *state);
 #endif
   int find_activity_(const char *name) const;
   int find_action_(const char *name) const;
   int find_event_trigger_(const char *name) const;
   template<typename Matcher> bool matches_(const Matcher &matcher) const;
-  bool rule_matches_(const EventRule &rule) const;
+  bool rule_matches_(size_t index) const;
+  bool apply_rule_updates_(size_t index);
+  bool materialize_event_rules_();
   bool derived_matches_(const DerivedActivity &derived) const;
   bool is_activity_active_(const char *name, uint8_t index) const;
   bool apply_derived_activities_();
@@ -213,8 +233,6 @@ class RuntimeController : public Component {
 #endif
   ResolvedPolicies resolved_policies_{};
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
-  char voip_activity_[64]{};
-  char last_voip_activity_[64]{};
   uint8_t last_voip_activity_index_{INVALID_ACTIVITY};
 #endif
 
@@ -313,49 +331,61 @@ class RuntimeController : public Component {
   };
   struct PendingEvent {
     PendingEventKind kind{PendingEventKind::EVENT};
-    char name[48]{};
-    ActivityUpdate updates[16]{};
-    size_t update_count{0};
+    union {
+      char name[48];
+      std::array<ActivityUpdate, 16> updates;
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
-    uint8_t voip_activity_index{INVALID_ACTIVITY};
+      uint8_t voip_activity_index;
 #endif
+    };
+    PendingEvent() : name{} {}
+    void reset_name() { new (&this->name) char[48]{}; }
+    void reset_updates() { new (&this->updates) std::array<ActivityUpdate, 16>{}; }
+    size_t update_count{0};
   };
 
-  struct EventRuleStorage {
-    EventRule *entries{nullptr};
+  static_assert(std::is_trivially_copyable<PendingEvent>::value, "Pending events must retain trivial copy semantics");
+
+  template<typename T> struct ConfigTable {
+    T *entries{nullptr};
     size_t capacity{0};
-    EventRule &operator[](size_t index) { return this->entries[index]; }
-    const EventRule &operator[](size_t index) const { return this->entries[index]; }
+    T &operator[](size_t index) { return this->entries[index]; }
+    const T &operator[](size_t index) const { return this->entries[index]; }
     size_t size() const { return this->capacity; }
   };
+  using EventRuleStorage = ConfigTable<EventRule>;
 
   struct Storage {
+    size_t allocated_bytes{0};
+    const StaticEventRule *static_rules{nullptr};
 #ifdef USE_RUNTIME_CONTROLLER_PRESENTATION_PRIORITY
-    std::array<int16_t, MAX_ACTIVITIES> presentation_priorities{};
+    ConfigTable<int16_t> presentation_priorities{};
 #endif
-    std::array<ActivityConfig, MAX_ACTIVITIES> activities{};
-    std::array<NamedAction, MAX_ACTIONS> actions{};
-    std::array<NamedAction, MAX_ACTIONS> event_triggers{};
-    std::array<EventActivity, MAX_EVENT_UPDATES> event_updates{};
+    ConfigTable<ActivityConfig> activities{};
+    ConfigTable<NamedAction> actions{};
+    ConfigTable<NamedAction> event_triggers{};
+    ConfigTable<EventActivity> event_updates{};
     EventRuleStorage event_rules{};
-    std::array<DerivedActivity, 16> derived_activities{};
-    std::array<PolicyValueAction, 32> policy_value_actions{};
-    std::array<PolicyOutput, 64> policy_outputs{};
-    std::array<PolicyChangeTrigger, MAX_POLICIES> policy_change_triggers{};
-    std::array<PolicyGlobalOutput, MAX_POLICIES> policy_global_outputs{};
+    ConfigTable<DerivedActivity> derived_activities{};
+    ConfigTable<PolicyValueAction> policy_value_actions{};
+    ConfigTable<PolicyOutput> policy_outputs{};
+    ConfigTable<PolicyChangeTrigger> policy_change_triggers{};
+    ConfigTable<PolicyGlobalOutput> policy_global_outputs{};
 #ifdef USE_RUNTIME_CONTROLLER_LED
-    std::array<LedState, 32> led_states{};
+    ConfigTable<LedState> led_states{};
 #endif
     std::array<const char *, 16> pending_actions{};
     std::array<PendingEvent, 16> pending_events{};
   };
 
+  size_t configuration_storage_bytes_() const;
   bool allocate_storage_();
   void release_storage_();
 
   Storage *storage_{nullptr};
   bool storage_in_psram_{false};
   size_t event_rule_capacity_{64};
+  StorageCapacities storage_capacities_{};
   StateOutput activity_mask_output_{};
   StateOutput sequence_output_{};
   size_t activity_count_{0};

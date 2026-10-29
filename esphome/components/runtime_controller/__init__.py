@@ -1529,11 +1529,75 @@ def _event_rule_count(events):
     )
 
 
+def _ordered_activities(config, profile_full, activities):
+    """One index order for emitted activities and immutable rule references."""
+    ordered = []
+    if profile_full and CONF_VOIP_STACK in config[CONF_OBSERVE]:
+        ordered.extend((f"voip:{name}", activity) for name, activity in _voip_states(config).items())
+    if CONF_VOIP in config:
+        voip = config[CONF_VOIP]
+        ordered.extend((voip[CONF_ACTIVITY_PREFIX] + name, activity)
+                       for name, activity in voip[CONF_STATES].items())
+    ordered.extend(activities.items())
+    return ordered
+
+
+def _storage_capacities(config, ordered, activities, derived, events):
+    policies = config[CONF_POLICIES]
+    values = [value for policy in policies.values() for value in policy[CONF_VALUES].values()]
+    led = config[CONF_OUTPUTS].get(CONF_LED)
+    return (
+        len(ordered), len(config[CONF_ACTIONS]),
+        sum(CONF_THEN in event for event in events.values()),
+        len(activities) if config[CONF_AUTO_EVENTS] else 0, len(derived),
+        sum(isinstance(value, dict) and CONF_THEN in value for value in values),
+        sum(isinstance(value, int) or CONF_VALUE in value for value in values),
+        sum(CONF_ON_CHANGE in policy for policy in policies.values()),
+        sum(CONF_OUTPUT in policy for policy in policies.values()),
+        len(_merged_led_states(led)) if led is not None else 0,
+    )
+
+
+def _emit_static_rules(var, config, ordered, events):
+    """Emit constant, indexed rules; update order preserves exclusive-group semantics."""
+    prefix = f"{config[CONF_ID].id}_rules"
+    indices = {name: index for index, (name, _) in enumerate(ordered)}
+    rows = []
+    for name, event in events.items():
+        rules = list(event.get(CONF_CASES, []))
+        if event.get(CONF_ACTIVATE) or event.get(CONF_DEACTIVATE) or event.get(CONF_ACTION):
+            rules.append(event)
+        for rule in rules:
+            updates = [(indices[activity], True) for activity in _as_list(rule.get(CONF_ACTIVATE, []))]
+            updates += [(indices[activity], False) for activity in _as_list(rule.get(CONF_DEACTIVATE, []))]
+            conditions = [_as_list(rule.get(key, [])) for key in (CONF_ANY, CONF_ALL, CONF_NONE)]
+            suffix = str(len(rows))
+            update_name = f"{prefix}_updates_{suffix}" if updates else "nullptr"
+            condition_name = f"{prefix}_conditions_{suffix}" if any(conditions) else "nullptr"
+            if updates:
+                content = ", ".join(f"{{{index}, {'true' if active else 'false'}}}" for index, active in updates)
+                cg.add_global(cg.RawStatement(
+                    f"static constexpr runtime_controller::RuntimeController::IndexedUpdate {update_name}[] = {{{content}}};"))
+            if any(conditions):
+                content = ", ".join(str(indices[activity]) for group in conditions for activity in group)
+                cg.add_global(cg.RawStatement(f"static constexpr uint8_t {condition_name}[] = {{{content}}};"))
+            rows.append("{" + ", ".join((str(cg.safe_exp(name)), str(cg.safe_exp(rule.get(CONF_ACTION, ""))),
+                         update_name, condition_name, str(len(updates)), *(str(len(group)) for group in conditions))) + "}")
+    if rows:
+        cg.add_global(cg.RawStatement(
+            f"static constexpr runtime_controller::RuntimeController::StaticEventRule {prefix}[] = {{" + ", ".join(rows) + "};"))
+        cg.add(var.set_static_event_rules(cg.RawExpression(prefix), len(rows)))
+
+
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     profile_full, activities, groups, derived_activities, events = _merged_runtime_config(config)
-    cg.add(var.set_event_rule_capacity(_event_rule_count(events)))
+    ordered = _ordered_activities(config, profile_full, activities)
+    capacities = _storage_capacities(config, ordered, activities, derived_activities, events)
+    cg.add(var.set_event_rule_capacity(0))
+    cg.add(var.set_storage_capacities(cg.RawExpression(
+        "runtime_controller::RuntimeController::StorageCapacities{" + ", ".join(map(str, capacities)) + "}")))
     cg.add(var.set_storage_in_psram(config[CONF_STORAGE_IN_PSRAM]))
     cg.add(var.set_debug(config[CONF_DEBUG]))
     if config[CONF_DEBUG]:
@@ -1589,15 +1653,6 @@ async def to_code(config):
         cg.add(var.set_voip(voip))
         cg.add(var.set_voip_activity_prefix("voip:"))
         cg.add_define("USE_RUNTIME_CONTROLLER_VOIP")
-        for state, activity in voip_states.items():
-            name = f"voip:{state}"
-            cg.add(
-                var.add_activity(
-                    name, activity[CONF_PRIORITY], activity.get(CONF_INITIAL, False)
-                )
-            )
-            for policy, value in activity[CONF_POLICIES].items():
-                cg.add(var.add_activity_policy(name, policy, value))
 
     observed = config[CONF_OBSERVE]
     source_events = any(observed.get(key) for key in SOURCE_HOOKS)
@@ -1643,15 +1698,8 @@ async def to_code(config):
         cg.add(var.set_voip(voip))
         cg.add(var.set_voip_activity_prefix(voip_conf[CONF_ACTIVITY_PREFIX]))
         cg.add_define("USE_RUNTIME_CONTROLLER_VOIP")
-        for state, activity in voip_conf[CONF_STATES].items():
-            name = f"{voip_conf[CONF_ACTIVITY_PREFIX]}{state}"
-            cg.add(
-                var.add_activity(name, activity[CONF_PRIORITY], activity[CONF_INITIAL])
-            )
-            for policy, value in activity[CONF_POLICIES].items():
-                cg.add(var.add_activity_policy(name, policy, value))
 
-    for name, activity in activities.items():
+    for name, activity in ordered:
         cg.add(
             var.add_activity(
                 name,
@@ -1693,28 +1741,8 @@ async def to_code(config):
         for activity in when.get(CONF_NONE_ACTIVE, []):
             cg.add(var.add_derived_none_active(activity))
 
+    _emit_static_rules(var, config, ordered, events)
     for name, event_conf in events.items():
-        for rule in event_conf.get(CONF_CASES, []):
-            cg.add(var.add_event_rule(name, rule.get(CONF_ACTION, "")))
-            for activity in _as_list(rule.get(CONF_ANY, [])):
-                cg.add(var.add_event_rule_any_active(activity))
-            for activity in _as_list(rule.get(CONF_ALL, [])):
-                cg.add(var.add_event_rule_all_active(activity))
-            for activity in _as_list(rule.get(CONF_NONE, [])):
-                cg.add(var.add_event_rule_none_active(activity))
-            for activity in _as_list(rule.get(CONF_ACTIVATE, [])):
-                cg.add(var.add_event_rule_update(activity, True))
-            for activity in _as_list(rule.get(CONF_DEACTIVATE, [])):
-                cg.add(var.add_event_rule_update(activity, False))
-        default_activate = _as_list(event_conf.get(CONF_ACTIVATE, []))
-        default_deactivate = _as_list(event_conf.get(CONF_DEACTIVATE, []))
-        default_action = event_conf.get(CONF_ACTION, "")
-        if default_activate or default_deactivate or default_action:
-            cg.add(var.add_event_rule(name, default_action))
-            for activity in default_activate:
-                cg.add(var.add_event_rule_update(activity, True))
-            for activity in default_deactivate:
-                cg.add(var.add_event_rule_update(activity, False))
         if CONF_THEN in event_conf:
             trigger = cg.new_Pvariable(
                 event_conf[CONF_THEN][automation.CONF_TRIGGER_ID],

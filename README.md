@@ -283,13 +283,12 @@ In a custom composition, leave out the `display.yaml` adapter when there is no
 display script to call. Legacy full presets deliberately include all their
 adapters; custom builds can use `base.yaml` plus selected adapters instead.
 
-The generic reducer still needs its common configuration tables and queues.
-Event-rule storage is sized once to the rules emitted for each instance after
-profile expansion; event and action queue capacities remain fixed. The other
-configuration tables retain their documented limits. The exclusions above remove feature-specific code and storage, rather
-than promising that the entire controller has zero overhead. Build flags apply
-to the whole firmware: a feature needed by one controller instance is compiled
-for that firmware.
+The generic reducer stores generated event rules as immutable indexed tables.
+Mutable configuration tables are sized once for each instance after profile
+expansion. Event and action queues keep their full 16-entry capacities.
+Direct C++ configurations retain the documented capacity defaults. Feature
+flags apply to the whole firmware: a feature needed by one controller instance
+is compiled for that firmware.
 
 ## Four terms used in the YAML
 
