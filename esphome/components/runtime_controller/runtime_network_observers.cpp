@@ -5,9 +5,19 @@
     defined(USE_RUNTIME_CONTROLLER_SOURCE_EVENTS)
 
 #include "esphome/components/runtime_controller/runtime_controller.h"
+#ifdef USE_RUNTIME_CONTROLLER_API
+#include "esphome/components/api/api_server.h"
+#endif
 #include <cstring>
 
 namespace esphome::runtime_controller {
+
+#ifdef USE_RUNTIME_CONTROLLER_API
+static bool is_presence_client(const char *name) {
+  return name[0] != '\0' && std::strncmp(name, "ESPHome Logs", 12) != 0 &&
+         std::strncmp(name, "ESPHome Dashboard", 17) != 0 && std::strncmp(name, "ESPHome Web", 11) != 0;
+}
+#endif
 
 void RuntimeNetworkObservers::setup() {
   if (this->runtime_ == nullptr) {
@@ -91,16 +101,8 @@ void RuntimeNetworkObservers::source_event(const char *event, const std::string 
     return;
 #ifdef USE_RUNTIME_CONTROLLER_API
   if (std::strcmp(event, "api_connected") == 0 || std::strcmp(event, "api_disconnected") == 0) {
-    if (text.empty() || text.rfind("ESPHome Logs", 0) == 0 || text.rfind("ESPHome Dashboard", 0) == 0 ||
-        text.rfind("ESPHome Web", 0) == 0)
+    if (!is_presence_client(text.c_str()))
       return;
-    if (std::strcmp(event, "api_connected") == 0) {
-      if (this->api_clients_ < UINT16_MAX)
-        ++this->api_clients_;
-    } else {
-      if (this->api_clients_ > 0)
-        --this->api_clients_;
-    }
     this->publish_api_presence_();
     return;
   }
@@ -128,6 +130,15 @@ void RuntimeNetworkObservers::source_event(const char *event, const std::string 
 
 #ifdef USE_RUNTIME_CONTROLLER_API
 void RuntimeNetworkObservers::publish_api_presence_() {
+  // Connect is emitted after authentication; disconnect after removal, even
+  // without a preceding connect. Derive presence from the API owner's state.
+  this->api_clients_ = 0;
+  if (api::global_api_server != nullptr) {
+    for (const auto &client : api::global_api_server->active_clients()) {
+      if (client->is_authenticated() && !client->is_marked_for_removal() && is_presence_client(client->get_name()))
+        ++this->api_clients_;
+    }
+  }
 #ifdef USE_RUNTIME_CONTROLLER_API_CLIENT_OUTPUT
   if (this->api_clients_output_ != nullptr)
     this->publish_api_clients_(this->api_clients_output_, this->api_clients_);

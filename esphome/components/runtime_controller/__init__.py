@@ -658,12 +658,14 @@ FULL_VOICE_VOIP_EVENTS = {
     },
     "va_start": {
         CONF_ACTIVATE: "va_starting",
+        # A real new run cannot inherit either half of the previous response join.
+        CONF_DEACTIVATE: ["va_run_ended", "va_response_drained"],
         CONF_ACTION: "cancel_response_cleanup",
         CONF_CASES: [
             {
                 CONF_ANY: "va_barging",
                 CONF_ACTIVATE: "va_listening",
-                CONF_DEACTIVATE: "va_barging",
+                CONF_DEACTIVATE: ["va_barging", "va_run_ended", "va_response_drained"],
                 CONF_ACTION: "cancel_response_cleanup",
             },
         ],

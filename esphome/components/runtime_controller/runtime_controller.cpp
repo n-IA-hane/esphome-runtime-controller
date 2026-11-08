@@ -321,7 +321,11 @@ void RuntimeController::dump_config() {
   ESP_LOGCONFIG(TAG, "  Storage: %u bytes in %s RAM",
                 static_cast<unsigned>(this->storage_->allocated_bytes + this->storage_->event_rules.size() * sizeof(EventRule)),
                 this->storage_in_psram_ ? "external" : "internal");
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
   ESP_LOGCONFIG(TAG, "  Debug: %s", YESNO(this->debug_));
+#else
+  ESP_LOGCONFIG(TAG, "  Debug: compiled out");
+#endif
   ESP_LOGCONFIG(TAG, "  Config valid: %s", YESNO(!this->config_error_));
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
   ESP_LOGCONFIG(TAG, "  VoIP observer: %s", this->voip_ != nullptr ? "configured" : "missing");
@@ -685,10 +689,12 @@ void RuntimeController::event(const char *name) {
     return;
   }
   Transaction transaction(*this);
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
   if (this->debug_) {
     ESP_LOGI(TAG, "EVENT seq=%" PRIu32 " name=%s mask=0x%08" PRIx32, this->sequence_,
              name != nullptr ? name : "-", this->generic_activity_mask_);
   }
+#endif
   const uint32_t old_mask = this->generic_activity_mask_;
   const ResolvedPolicies old_policies = this->resolved_policies_;
   bool changed = false;
@@ -818,14 +824,10 @@ void RuntimeController::dump_state(const char *reason) {
                  ? this->storage_->activities[this->last_voip_activity_index_].name : "-");
   }
 #endif
-}
 #else
   (void) reason;
-  if (this->debug_) {
-    ESP_LOGI(TAG, "SNAPSHOT seq=%" PRIu32 " mask=0x%08" PRIx32, this->sequence_, this->generic_activity_mask_);
-  }
-}
 #endif
+}
 
 bool RuntimeController::is_activity_active(const char *name) const {
   const int index = this->find_activity_(name);
@@ -1065,6 +1067,9 @@ bool RuntimeController::apply_activity_update_by_index_(int index, bool active) 
 }
 
 void RuntimeController::commit_outputs_(const char *reason, uint32_t old_mask, const ResolvedPolicies &old_policies) {
+#ifndef USE_RUNTIME_CONTROLLER_DEBUG
+  (void) reason;
+#endif
   if (old_mask == this->generic_activity_mask_) {
     bool policy_changed = old_policies.value_count != this->resolved_policies_.value_count;
     for (size_t i = 0; !policy_changed && i < this->resolved_policies_.value_count; i++) {
@@ -1078,10 +1083,12 @@ void RuntimeController::commit_outputs_(const char *reason, uint32_t old_mask, c
   }
 
   this->sequence_++;
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
   if (this->debug_) {
     ESP_LOGI(TAG, "REDUCE seq=%" PRIu32 " reason=%s mask=0x%08" PRIx32 "->0x%08" PRIx32, this->sequence_,
              reason != nullptr ? reason : "-", old_mask, this->generic_activity_mask_);
   }
+#endif
   // The enclosing transaction keeps this snapshot immutable until its effects,
   // output script and event.then finish. Nested inputs only append to the queue.
   const ResolvedPolicies new_policies = this->resolved_policies_;
@@ -1141,8 +1148,10 @@ void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies
     for (size_t j = 0; j < this->policy_value_action_count_; j++) {
       const auto &action = this->storage_->policy_value_actions[j];
       if (value != nullptr && str_eq(action.policy, policy) && str_eq(action.value, value)) {
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
         if (this->debug_)
           ESP_LOGI(TAG, "POLICY seq=%" PRIu32 " %s=%s", this->sequence_, policy, value);
+#endif
         action.trigger->trigger();
       }
     }
@@ -1150,10 +1159,12 @@ void RuntimeController::run_policy_actions_(const ResolvedPolicies &old_policies
     for (size_t j = 0; j < this->policy_change_trigger_count_; j++) {
       const auto &trigger = this->storage_->policy_change_triggers[j];
       if (str_eq(trigger.policy, policy)) {
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
         if (this->debug_) {
           ESP_LOGI(TAG, "POLICY_CHANGE seq=%" PRIu32 " %s=%s output=%" PRId32, this->sequence_, policy,
                    value != nullptr ? value : "(unset)", output);
         }
+#endif
         trigger.trigger->trigger(output);
       }
     }
@@ -1273,8 +1284,10 @@ bool RuntimeController::enqueue_event_(const char *name) {
     return false;
   }
   this->pending_event_count_++;
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
   if (this->debug_)
     ESP_LOGI(TAG, "EVENT_QUEUE seq=%" PRIu32 " name=%s", this->sequence_, event.name);
+#endif
   this->enable_loop_soon_any_context();
   return true;
 }
@@ -1316,8 +1329,10 @@ bool RuntimeController::enqueue_activity_updates_(const ActivityUpdate *updates,
     this->pending_event_count_--;
     return false;
   }
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
   if (this->debug_)
     ESP_LOGI(TAG, "SET_QUEUE seq=%" PRIu32 " count=%u", this->sequence_, static_cast<unsigned>(event.update_count));
+#endif
   this->enable_loop_soon_any_context();
   return true;
 }
@@ -1385,8 +1400,10 @@ void RuntimeController::run_named_action_(const char *name) {
   name = this->storage_->actions[action_index].name;
   for (size_t i = 0; i < this->pending_action_count_; i++) {
     if (str_eq(this->storage_->pending_actions[i], name)) {
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
       if (this->debug_)
         ESP_LOGI(TAG, "ACTION_SKIP_DUP seq=%" PRIu32 " name=%s", this->sequence_, name);
+#endif
       return;
     }
   }
@@ -1394,8 +1411,10 @@ void RuntimeController::run_named_action_(const char *name) {
     ESP_LOGE(TAG, "Cannot queue action '%s': queue full", name);
     return;
   }
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
   if (this->debug_)
     ESP_LOGI(TAG, "ACTION_QUEUE seq=%" PRIu32 " name=%s", this->sequence_, name);
+#endif
   this->storage_->pending_actions[this->pending_action_count_++] = name;
   this->enable_loop_soon_any_context();
 }
@@ -1406,8 +1425,10 @@ void RuntimeController::execute_named_action_(const char *name) {
     ESP_LOGW(TAG, "Ignoring unknown queued action '%s'", name != nullptr ? name : "-");
     return;
   }
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
   if (this->debug_)
     ESP_LOGI(TAG, "ACTION_RUN seq=%" PRIu32 " name=%s", this->sequence_, this->storage_->actions[index].name);
+#endif
   this->storage_->actions[index].trigger->trigger();
 }
 
@@ -1428,8 +1449,10 @@ void RuntimeController::run_event_trigger_(const char *name) {
   const int index = this->find_event_trigger_(name);
   if (index < 0)
     return;
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
   if (this->debug_)
     ESP_LOGI(TAG, "EVENT_THEN seq=%" PRIu32 " name=%s", this->sequence_, this->storage_->event_triggers[index].name);
+#endif
   // Called inside the input's transaction. Its named action has already been
   // queued, and nested events cannot run until this trigger has returned.
   this->storage_->event_triggers[index].trigger->trigger();

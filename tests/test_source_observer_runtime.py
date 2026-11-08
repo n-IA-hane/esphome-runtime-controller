@@ -22,6 +22,9 @@ def test_source_events_preserve_payload_order_timers_and_ha_presence(tmp_path):
   void fire_timeouts() { auto ready=timers; timers.clear(); for(auto &item:ready)item.second(); }
   void mark_failed()""")
     component.write_text(header)
+    api = stubs / "esphome/components/api/api_server.h"
+    api.parent.mkdir(parents=True)
+    shutil.copy2(ROOT / "tests/fixtures/api/api_server.h", api)
     voice = stubs / "esphome/components/voice_assistant/voice_assistant.h"
     voice.parent.mkdir(parents=True)
     voice.write_text(r'''
@@ -42,10 +45,13 @@ struct VoiceAssistant {
     source.write_text(r'''
 #include "runtime_controller.h"
 #include "runtime_network_observers.h"
+#include "esphome/components/api/api_server.h"
 #include <cassert>
 #include <cstring>
 using namespace esphome::runtime_controller;
 int main(){
+ esphome::api::APIServer server;
+ esphome::api::global_api_server=&server;
  RuntimeController r;
  r.add_activity("idle",0,true);r.add_activity_policy("idle","presentation","idle");
  r.add_activity("listen",10,false);r.add_activity_policy("listen","presentation","listening");
@@ -75,18 +81,26 @@ int main(){
  assert(voice.timers.size()==1); // the adapter must not modify source-owned timers
  voice.timers={{"restored"}};o.source_event("timer_updated","restored");r.loop();
  assert(r.is_activity_active("timer")); // updates may introduce a timer after reconnect
- o.source_event("api_connected","ESPHome Logs test");r.loop();assert(!r.is_activity_active("online"));
- o.source_event("api_connected","Home Assistant A");o.source_event("api_connected","Home Assistant B");
+ auto connect=[&](const char *name) {
+  auto *client=server.accept(name);client->authenticated=true;
+  o.source_event("api_connected",name);return client;
+ };
+ auto close=[&](esphome::api::APIConnection *client) {
+  auto name=server.remove(client);o.source_event("api_disconnected",name);
+ };
+ connect("ESPHome Logs test");r.loop();assert(!r.is_activity_active("online"));
+ auto *first=connect("Home Assistant A");auto *second=connect("Home Assistant B");
  r.loop();assert(r.is_activity_active("online"));
- o.source_event("api_disconnected","Home Assistant A");o.fire_timeouts();r.loop();
+ close(first);o.fire_timeouts();r.loop();
  assert(r.is_activity_active("online"));
- o.source_event("api_disconnected","Home Assistant B");
- o.source_event("api_connected","Home Assistant C");o.fire_timeouts();r.loop();
+ close(second);
+ auto *third=connect("Home Assistant C");o.fire_timeouts();r.loop();
  assert(r.is_activity_active("online"));
- o.source_event("api_disconnected","Home Assistant C");o.fire_timeouts();r.loop();
+ close(third);o.fire_timeouts();r.loop();
  assert(!r.is_activity_active("online"));
  assert(!r.loop_enabled() && !o.loop_enabled());
  assert(o.timers.empty()); // grace timeout is one-shot, not periodic polling
+ esphome::api::global_api_server=nullptr;
 }
 ''')
     implementation = ROOT / "esphome/components/runtime_controller"

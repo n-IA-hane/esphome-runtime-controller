@@ -43,7 +43,13 @@ class RuntimeController : public Component {
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::PROCESSOR; }
 
-  void set_debug(bool debug) { this->debug_ = debug; }
+  void set_debug(bool debug) {
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
+    this->debug_ = debug;
+#else
+    (void) debug;
+#endif
+  }
   void set_storage_in_psram(bool storage_in_psram);
   // Codegen sets the exact capacity before any configuration allocates storage.
   // Direct C++ users retain the historical 64-rule default.
@@ -219,7 +225,9 @@ class RuntimeController : public Component {
   const char *voip_activity_prefix_{nullptr};
 #endif
 
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
   bool debug_{false};
+#endif
   bool config_error_{false};
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
   bool voip_callback_registered_{false};
