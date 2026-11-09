@@ -86,6 +86,10 @@ int main(int argc, char **argv) {
   runtime.event("boot_ready"); runtime.event("wifi_connected");
   runtime.event("ha_connected"); runtime.event("va_client_connected");
   unsigned idle_events=0;
+  unsigned announcement_stops=0;
+  Trigger<> stop_announcement;
+  stop_announcement.fn=[&] { ++announcement_stops; };
+  runtime.add_action_trigger("stop_announcement", &stop_announcement);
   Trigger<> idle_observed; idle_observed.fn=[&] { ++idle_events; };
   runtime.add_event_trigger("va_idle", &idle_observed);
   auto event = [&](const char *name) { observer.source_event(name, ""); settle(); };
@@ -101,7 +105,93 @@ int main(int argc, char **argv) {
     assert(std::strcmp(runtime.get_policy("audio_policy"), "normal") == 0);
   };
   const char *scenario=argv[1];
-  if (std::strcmp(scenario, "no_tts_listening") == 0 ||
+  if (std::strncmp(scenario, "playback_", 9) == 0) {
+    const bool responding_first=std::strstr(scenario, "responding_first") != nullptr;
+    const bool drain_first=std::strstr(scenario, "drain_first") != nullptr;
+    const bool listening=std::strstr(scenario, "listening") != nullptr;
+    start();
+    if (!listening) event("va_thinking");
+    // Real adverse ordering: ANNOUNCING is published by player.loop(), not
+    // synchronously by make_call().perform(). INTENT_PROGRESS is deferred.
+    if (responding_first) observer.source_event("va_responding", "");
+    player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    if (!responding_first) observer.source_event("va_responding", "");
+    settle();
+    assert(announcement_stops == 0);
+    assert(runtime.is_activity_active("announcement"));
+    assert(runtime.is_activity_active("va_responding"));
+    assert(std::strcmp(runtime.get_policy("audio_policy"), "duck") == 0);
+    if (drain_first) media(media_player::MEDIA_PLAYER_STATE_IDLE);
+    event("va_end");
+    if (!drain_first) {
+      assert(runtime.is_activity_active("va_responding"));
+      media(media_player::MEDIA_PLAYER_STATE_IDLE);
+    }
+    inactive();
+  } else if (std::strcmp(scenario, "foreign_announcement") == 0) {
+    start(); event("va_thinking");
+    player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    settle(); assert(announcement_stops == 1);
+    assert(runtime.is_activity_active("announcement"));
+    media(media_player::MEDIA_PLAYER_STATE_IDLE); event("va_end"); inactive();
+  } else if (std::strcmp(scenario, "drain_before_response_callback") == 0) {
+    start(); event("va_thinking");
+    player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    player.publish(media_player::MEDIA_PLAYER_STATE_IDLE);
+    observer.source_event("va_responding", "");
+    settle(); assert(announcement_stops == 0);
+    assert(runtime.is_activity_active("va_response_drained"));
+    event("va_end"); inactive();
+  } else if (std::strcmp(scenario, "explicit_stop_keeps_intent") == 0) {
+    start(); event("va_thinking");
+    player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    observer.source_event("va_responding", "");
+    runtime.request_action("stop_announcement");
+    settle(); assert(announcement_stops == 1);
+    event("va_end"); media(media_player::MEDIA_PLAYER_STATE_IDLE); inactive();
+  } else if (std::strcmp(scenario, "explicit_stop_queued_first") == 0) {
+    start(); event("va_thinking");
+    runtime.request_action("stop_announcement");
+    player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    observer.source_event("va_responding", "");
+    settle(); assert(announcement_stops == 1);
+    event("va_end"); media(media_player::MEDIA_PLAYER_STATE_IDLE); inactive();
+  } else if (std::strcmp(scenario, "stopping_rejects_stale_response") == 0) {
+    start(); runtime.event("voice_stop");
+    player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    observer.source_event("va_responding", "");
+    settle(); assert(announcement_stops == 1);
+    assert(!runtime.is_activity_active("va_responding"));
+    assert(runtime.is_activity_active("va_stopping"));
+    media(media_player::MEDIA_PLAYER_STATE_IDLE);
+    runtime.event("va_stop_complete"); inactive();
+  } else if (std::strcmp(scenario, "new_run_invalidates_stop") == 0) {
+    start(); player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    observer.source_event("va_start", "");
+    observer.source_event("va_listening", "");
+    settle(); assert(announcement_stops == 0);
+    media(media_player::MEDIA_PLAYER_STATE_IDLE); event("va_end"); inactive();
+  } else if (std::strcmp(scenario, "new_run_cannot_adopt_old_drain") == 0) {
+    start(); player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    player.publish(media_player::MEDIA_PLAYER_STATE_IDLE);
+    observer.source_event("va_start", "");
+    observer.source_event("va_listening", "");
+    observer.source_event("va_thinking", "");
+    observer.source_event("va_responding", "");
+    observer.source_event("va_end", "");
+    settle(); assert(announcement_stops == 0);
+    assert(runtime.is_activity_active("va_responding"));
+    assert(!runtime.is_activity_active("va_response_drained"));
+    media(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    media(media_player::MEDIA_PLAYER_STATE_IDLE); inactive();
+  } else if (std::strcmp(scenario, "new_playback_invalidates_stop") == 0) {
+    start(); player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    player.publish(media_player::MEDIA_PLAYER_STATE_IDLE);
+    observer.source_event("va_responding", "");
+    player.publish(media_player::MEDIA_PLAYER_STATE_ANNOUNCING);
+    settle(); assert(announcement_stops == 0);
+    event("va_end"); media(media_player::MEDIA_PLAYER_STATE_IDLE); inactive();
+  } else if (std::strcmp(scenario, "no_tts_listening") == 0 ||
       std::strcmp(scenario, "no_tts_thinking") == 0) {
     start();
     if (std::strcmp(scenario, "no_tts_thinking") == 0) event("va_thinking");
@@ -175,7 +265,8 @@ int main(int argc, char **argv) {
         "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
         "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
         "-DUSE_RUNTIME_CONTROLLER_SOURCE_EVENTS", "-DUSE_RUNTIME_CONTROLLER_VOICE_ASSISTANT",
-        "-DUSE_RUNTIME_CONTROLLER_MEDIA_PLAYER", "-I", str(stubs), "-I", str(COMPONENT),
+        "-DUSE_RUNTIME_CONTROLLER_MEDIA_PLAYER", "-DUSE_RUNTIME_CONTROLLER_VOICE_MEDIA",
+        "-I", str(stubs), "-I", str(COMPONENT),
         "-I", str(ROOT), str(source),
         *(str(COMPONENT / name) for name in (
             "runtime_controller.cpp", "runtime_controller_state.cpp", "runtime_network_observers.cpp")),
@@ -188,6 +279,13 @@ int main(int argc, char **argv) {
 @pytest.mark.parametrize("scenario", [
     "no_tts_listening", "no_tts_thinking", "late_announcement", "audio_first_music",
     "error", "disconnect", "stop_ack", "barge_after_run_end", "barge_after_audio_drain",
+    "playback_responding_first_end_first", "playback_responding_first_drain_first",
+    "playback_first_end_first", "playback_first_drain_first",
+    "playback_first_listening_end_first", "playback_first_listening_drain_first",
+    "foreign_announcement", "new_run_invalidates_stop", "new_playback_invalidates_stop",
+    "drain_before_response_callback", "explicit_stop_keeps_intent",
+    "explicit_stop_queued_first",
+    "stopping_rejects_stale_response", "new_run_cannot_adopt_old_drain",
 ])
 def test_public_completion_does_not_require_noncontinuous_on_idle(
     upstream_completion_binary, scenario,

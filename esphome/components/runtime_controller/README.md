@@ -439,9 +439,21 @@ Your `activities`, `events` and `policies` declarations override profile entries
 with the same names. Review the complete resulting rule when overriding an event.
 
 The main policy channels are `led_status`, `display_status`, `va_state`,
-`va_response`, `audio_policy`, `ringtone` and `timer_alarm`. Voice response
-completion waits for both the assistant run and playback to finish. This is why
-an `on_end` notification alone must not be used to force the device back to idle.
+`va_response`, `audio_policy`, `ringtone` and `timer_alarm`. With an observed
+Voice Assistant, response completion follows its configured output. An observed
+MediaPlayer supplies playback completion through its state callbacks. Direct
+speaker output supplies `on_tts_stream_end`, after the speaker has drained. Both
+paths wait for the assistant run and playback, in either order. If Runtime has
+no observable output for that assistant, its run end completes the response.
+User automations remain in the same upstream triggers.
+
+An announcement may begin before the deferred Voice Assistant response callback.
+Runtime retains that playback observation and adopts it when the response arrives.
+The profile's queued rejection stop is checked against the current run, playback
+and pending source events before it executes. A completed or superseded playback
+cannot be stopped by that old request; an unrelated announcement is still stopped
+while the voice pipeline is busy. Explicit `stop_announcement` action requests
+retain their meaning.
 
 The main default priorities are:
 

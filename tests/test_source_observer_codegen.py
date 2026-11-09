@@ -141,6 +141,7 @@ runtime_controller:
     assert "status_led->make_call()" in cpp
     assert "apply_call.set_effect(" in cpp and "apply_call.perform();" in cpp
     assert "USE_RUNTIME_CONTROLLER_LED" not in (build / "src/esphome/core/defines.h").read_text()
+    assert "USE_RUNTIME_CONTROLLER_VOICE_MEDIA" not in (build / "src/esphome/core/defines.h").read_text()
     # A single normal ActionList retains the observer, user work and delay.
     start_action = re.search(r'(\w+)->set_event\("va_start"\)', cpp).group(1)
     assert re.search(r'add_actions\(\{' + start_action + r', [^}]+\}\)', cpp)

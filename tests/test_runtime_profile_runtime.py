@@ -14,12 +14,17 @@ def _list(value):
     return value if isinstance(value, list) else [value]
 
 
-def _profile_cpp(static_rules=False):
+def _profile_cpp(static_rules=False, profile_config=None):
     """Read literal profile definitions without importing ESPHome codegen."""
     from test_runtime_controller_contract import _load_component_module
 
     module = _load_component_module()
     values = vars(module)
+    if profile_config is not None:
+        activities, groups, derived, events = module._selected_profile(profile_config)
+        values = dict(values, FULL_VOICE_VOIP_ACTIVITIES=activities,
+                      FULL_VOICE_VOIP_GROUPS=groups, FULL_VOICE_VOIP_DERIVED=derived,
+                      FULL_VOICE_VOIP_EVENTS=events)
     quote = json.dumps
     lines = [
         '#include "runtime_controller.h"',

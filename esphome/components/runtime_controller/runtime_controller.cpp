@@ -699,6 +699,9 @@ void RuntimeController::event(const char *name) {
   const ResolvedPolicies old_policies = this->resolved_policies_;
   bool changed = false;
   bool event_known = false;
+#ifdef USE_RUNTIME_CONTROLLER_VOICE_MEDIA
+  changed |= this->update_announcement_context_(name);
+#endif
 
   for (size_t i = 0; i < this->event_rule_count_; i++) {
     const auto *static_rules = this->storage_->static_rules;
@@ -715,7 +718,7 @@ void RuntimeController::event(const char *name) {
       this->apply_generic_outputs_();
       this->commit_outputs_(name != nullptr ? name : "event", old_mask, old_policies);
     }
-    this->run_named_action_(action);
+    this->run_named_action_(action, name);
     this->run_event_trigger_(name);
     return;
   }
@@ -1387,7 +1390,10 @@ void RuntimeController::drain_pending_events_() {
   this->draining_pending_events_ = false;
 }
 
-void RuntimeController::run_named_action_(const char *name) {
+void RuntimeController::run_named_action_(const char *name, const char *source_event) {
+#ifndef USE_RUNTIME_CONTROLLER_VOICE_MEDIA
+  (void) source_event;
+#endif
   if (name == nullptr || name[0] == '\0')
     return;
   const int action_index = this->find_action_(name);
@@ -1398,6 +1404,27 @@ void RuntimeController::run_named_action_(const char *name) {
   // Always retain the stable code-generated name. A request_action template
   // passes a temporary std::string whose c_str() expires after play().
   name = this->storage_->actions[action_index].name;
+#ifdef USE_RUNTIME_CONTROLLER_VOICE_MEDIA
+  if (str_eq(name, "stop_announcement")) {
+    // Only the profile's rejection is conditional. An explicit user action
+    // keeps its normal meaning, including when it replaces a queued rejection.
+    bool explicit_pending = false;
+    if (this->announcement_stop_.reason == AnnouncementStopReason::NONE) {
+      for (size_t i = 0; i < this->pending_action_count_; ++i)
+        explicit_pending |= str_eq(this->storage_->pending_actions[i], name);
+    }
+    if (!explicit_pending) {
+      this->announcement_stop_ = AnnouncementStopContext{};
+      if (str_eq(source_event, "announcement_started")) {
+        this->announcement_stop_.run = this->voice_run_generation_;
+        this->announcement_stop_.playback = this->announcement_generation_;
+        this->announcement_stop_.reason = this->is_activity_active("va_stopping")
+                                              ? AnnouncementStopReason::STOPPING
+                                              : AnnouncementStopReason::PIPELINE_BUSY;
+      }
+    }
+  }
+#endif
   for (size_t i = 0; i < this->pending_action_count_; i++) {
     if (str_eq(this->storage_->pending_actions[i], name)) {
 #ifdef USE_RUNTIME_CONTROLLER_DEBUG
@@ -1420,6 +1447,19 @@ void RuntimeController::run_named_action_(const char *name) {
 }
 
 void RuntimeController::execute_named_action_(const char *name) {
+#ifdef USE_RUNTIME_CONTROLLER_VOICE_MEDIA
+  if (str_eq(name, "stop_announcement")) {
+    if (!this->announcement_stop_is_current_()) {
+#ifdef USE_RUNTIME_CONTROLLER_DEBUG
+      if (this->debug_)
+        ESP_LOGI(TAG, "ACTION_SKIP_STALE seq=%" PRIu32 " name=%s run=%" PRIu32 " playback=%" PRIu32,
+                 this->sequence_, name, this->announcement_stop_.run, this->announcement_stop_.playback);
+#endif
+      return;
+    }
+    this->announcement_stop_.reason = AnnouncementStopReason::NONE;
+  }
+#endif
   int index = this->find_action_(name);
   if (index < 0) {
     ESP_LOGW(TAG, "Ignoring unknown queued action '%s'", name != nullptr ? name : "-");
@@ -1431,6 +1471,69 @@ void RuntimeController::execute_named_action_(const char *name) {
 #endif
   this->storage_->actions[index].trigger->trigger();
 }
+
+#ifdef USE_RUNTIME_CONTROLLER_VOICE_MEDIA
+bool RuntimeController::update_announcement_context_(const char *event) {
+  auto &stop = this->announcement_stop_;
+  if (str_eq(event, "va_start") || str_eq(event, "announcement_started")) {
+    if (str_eq(event, "va_start"))
+      ++this->voice_run_generation_;
+    else
+      ++this->announcement_generation_;
+    if (stop.reason != AnnouncementStopReason::NONE)
+      stop.reason = AnnouncementStopReason::INVALID;
+    return false;
+  }
+  if (stop.run != this->voice_run_generation_ || stop.playback != this->announcement_generation_)
+    return false;
+  if ((str_eq(event, "media_idle") || str_eq(event, "media_paused") || str_eq(event, "media_playing")) &&
+      this->is_activity_active("announcement"))
+    stop.drained = true;
+  if (str_eq(event, "va_responding") && stop.reason == AnnouncementStopReason::PIPELINE_BUSY &&
+      !this->is_activity_active("va_barging") && !this->is_activity_active("va_stopping")) {
+    // Playback can precede the deferred public VA phase. Adopt its observed
+    // completion too, even if a very short response has already drained.
+    stop.reason = AnnouncementStopReason::ADOPTED;
+    if (stop.drained)
+      return this->apply_activity_update_("va_response_drained", true);
+  }
+  return false;
+}
+
+bool RuntimeController::announcement_stop_is_current_() const {
+  const auto &stop = this->announcement_stop_;
+  if (stop.reason == AnnouncementStopReason::NONE)
+    return true;
+  if (stop.reason == AnnouncementStopReason::ADOPTED || stop.reason == AnnouncementStopReason::INVALID ||
+      stop.run != this->voice_run_generation_ || stop.playback != this->announcement_generation_ ||
+      !this->is_activity_active("announcement"))
+    return false;
+  const bool stopping = this->is_activity_active("va_stopping");
+  const bool barging = this->is_activity_active("va_barging");
+  if (stop.reason == AnnouncementStopReason::STOPPING && !stopping)
+    return false;
+  if (stop.reason == AnnouncementStopReason::PIPELINE_BUSY &&
+      !this->is_activity_active("va_start_requested") && !this->is_activity_active("va_starting") &&
+      !this->is_activity_active("va_listening") && !this->is_activity_active("va_thinking") && !barging)
+    return false;
+  // Source automations intentionally defer reduction until their synchronous
+  // user actions finish. Inspect only observations that supersede this stop;
+  // do not reorder the two queues or execute unrelated events early.
+  for (size_t i = 0; i < this->pending_event_count_; ++i) {
+    const auto &pending = this->storage_->pending_events[i];
+    if (pending.kind != PendingEventKind::EVENT)
+      continue;
+    const char *event = pending.name;
+    if (str_eq(event, "va_start") || str_eq(event, "announcement_started") || str_eq(event, "media_idle") ||
+        str_eq(event, "media_paused") || str_eq(event, "media_playing") || str_eq(event, "va_idle") ||
+        str_eq(event, "va_error") || str_eq(event, "va_client_disconnected") || str_eq(event, "voice_stop"))
+      return false;
+    if (str_eq(event, "va_responding") && !stopping && !barging)
+      return false;
+  }
+  return true;
+}
+#endif
 
 void RuntimeController::drain_pending_actions_() {
   // Newly queued actions run on the next loop turn. This preserves FIFO order

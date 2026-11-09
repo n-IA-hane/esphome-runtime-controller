@@ -203,9 +203,21 @@ class RuntimeController : public Component {
   bool enqueue_voip_activity_(uint8_t index);
 #endif
   void drain_pending_events_();
-  void run_named_action_(const char *name);
+  void run_named_action_(const char *name, const char *source_event = nullptr);
   void execute_named_action_(const char *name);
   void drain_pending_actions_();
+#ifdef USE_RUNTIME_CONTROLLER_VOICE_MEDIA
+  bool update_announcement_context_(const char *event);
+  bool announcement_stop_is_current_() const;
+  enum class AnnouncementStopReason : uint8_t { NONE, PIPELINE_BUSY, STOPPING, ADOPTED, INVALID };
+  struct AnnouncementStopContext {
+    uint32_t run{0}, playback{0};
+    AnnouncementStopReason reason{AnnouncementStopReason::NONE};
+    bool drained{false};
+  };
+  uint32_t voice_run_generation_{0}, announcement_generation_{0};
+  AnnouncementStopContext announcement_stop_{};
+#endif
   void run_event_trigger_(const char *name);
   void run_policy_actions_(const ResolvedPolicies &old_policies, const ResolvedPolicies &new_policies);
 #ifdef USE_RUNTIME_CONTROLLER_LED

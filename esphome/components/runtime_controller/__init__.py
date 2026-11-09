@@ -109,6 +109,7 @@ CONF_BRIGHTNESS = "brightness"
 CONF_TIMERS = "timers"
 CONF_API = "api"
 CONF_OBSERVER_BINDINGS = "_observer_bindings"
+CONF_VOICE_PLAYBACK = "_voice_playback"
 
 PROFILE_FULL_VOICE_VOIP = "full_voice_voip"
 PROFILE_PRESENTATION = "presentation"
@@ -132,6 +133,7 @@ SOURCE_HOOKS = {
         "on_start": "va_start", "on_listening": "va_listening",
         "on_stt_vad_end": "va_thinking", "on_intent_progress": "va_responding",
         "on_tts_start": "va_responding", "on_end": "va_end", "on_idle": "va_idle",
+        "on_tts_stream_end": "va_tts_stream_end",
         "on_error": "va_error", "on_client_connected": "va_client_connected",
         "on_client_disconnected": "va_client_disconnected",
     },
@@ -526,6 +528,7 @@ FULL_VOICE_VOIP_EVENTS = {
     "media_playing": _media_completion_event(True),
     "announcement_started": {
         CONF_ACTIVATE: "announcement",
+        CONF_DEACTIVATE: "va_response_drained",
         CONF_CASES: [
             {
                 CONF_ANY: [
@@ -536,10 +539,10 @@ FULL_VOICE_VOIP_EVENTS = {
                     "va_thinking",
                     "va_stopping",
                 ],
-                CONF_DEACTIVATE: [
-                    "announcement",
-                    "va_stopping",
-                ],
+                # Keep physical player truth until the stop actually drains.
+                # A deferred VA phase can still adopt this response playback.
+                CONF_ACTIVATE: "announcement",
+                CONF_DEACTIVATE: "va_response_drained",
                 CONF_ACTION: "stop_announcement",
             },
         ],
@@ -942,6 +945,36 @@ def _selected_profile(config):
                     if (r := select_rule(case)) is not None
                 ]
             events[name] = selected
+    playback = config.get(CONF_VOICE_PLAYBACK)
+    if playback == "none" and "va_end" in events:
+        # No source can report output completion. The public pipeline end is
+        # sufficient; waiting for player/stream callbacks would never finish.
+        events["va_end"] = deepcopy(events["va_end"])
+        for case in events["va_end"].get(CONF_CASES, []):
+            if case.get(CONF_ANY) == ["va_responding"]:
+                case.pop(CONF_ACTIVATE, None)
+                case[CONF_DEACTIVATE] = ["va_responding", "va_run_ended", "va_response_drained"]
+    if playback in ("speaker", "none"):
+        # An independently observed player still owns its music/announcement
+        # state, but cannot complete direct-speaker VA output.
+        for name, playing in (("media_idle", False), ("media_paused", False), ("media_playing", True)):
+            if name in events:
+                events[name] = {CONF_DEACTIVATE: ["announcement"]}
+                if playing:
+                    events[name][CONF_ACTIVATE] = "media"
+                else:
+                    events[name][CONF_DEACTIVATE].append("media")
+    if playback == "speaker" and "va_responding" in names:
+        events["va_tts_stream_end"] = {
+            CONF_CASES: [
+                {CONF_ANY: ["va_barging", "va_stopping"]},
+                {
+                    CONF_ALL: ["va_responding", "va_run_ended"],
+                    CONF_DEACTIVATE: ["va_responding", "va_run_ended", "va_response_drained"],
+                },
+                {CONF_ANY: "va_responding", CONF_ACTIVATE: "va_response_drained"},
+            ],
+        }
     groups = {
         k: [x for x in v if x in names] for k, v in FULL_VOICE_VOIP_GROUPS.items()
     }
@@ -1011,6 +1044,16 @@ def _attach_source_observers(config):
         raise cv.Invalid("Voice Assistant and timer observers must refer to the same component")
     if config[CONF_STATE_OUTPUTS].get("api_clients") and not observed.get(CONF_API):
         raise cv.Invalid("state_outputs.api_clients requires observe.api")
+    if observed.get(CONF_VOICE_ASSISTANT):
+        path = full.get_path_for_id(observed[CONF_VOICE_ASSISTANT])[:-1]
+        voice = full.get_config_for_path(path)
+        if "speaker" in voice:
+            config[CONF_VOICE_PLAYBACK] = "speaker"
+        elif (CONF_MEDIA_PLAYER in voice and observed.get(CONF_MEDIA_PLAYER) == voice[CONF_MEDIA_PLAYER]
+              and "media_player" in config.get(CONF_FEATURES, PROFILE_FEATURES)):
+            config[CONF_VOICE_PLAYBACK] = "media_player"
+        else:
+            config[CONF_VOICE_PLAYBACK] = "none"
     for binding in config.pop(CONF_OBSERVER_BINDINGS, []):
         source, hook = binding["source"], binding["hook"]
         if source == CONF_API:
@@ -1020,6 +1063,10 @@ def _attach_source_observers(config):
         else:
             path = full.get_path_for_id(observed[source])[:-1]
             target = full.get_config_for_path(path)
+        # Upstream explicitly rejects TTS stream hooks without speaker. The
+        # target is known only after IDs have resolved in final validation.
+        if hook == "on_tts_stream_end" and "speaker" not in target:
+            continue
         key = (str(config[CONF_ID]), source, hook)
         if key in attachments:
             continue
@@ -1044,7 +1091,9 @@ def _attach_source_observers(config):
         else:
             target[hook] = addition
         attachments.add(key)
-    return config
+    # Backend selection can add completion rules after the initial validation.
+    # Recheck the same bounded graph before code generation uses its capacities.
+    return _validate_runtime_controller(config)
 
 
 def _has_presentation(config):
@@ -1595,6 +1644,10 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     profile_full, activities, groups, derived_activities, events = _merged_runtime_config(config)
+    if ("stop_announcement" in config[CONF_ACTIONS]
+            and "va_responding" in activities and "announcement" in activities
+            and config.get(CONF_VOICE_PLAYBACK, "media_player") == "media_player"):
+        cg.add_define("USE_RUNTIME_CONTROLLER_VOICE_MEDIA")
     ordered = _ordered_activities(config, profile_full, activities)
     capacities = _storage_capacities(config, ordered, activities, derived_activities, events)
     cg.add(var.set_event_rule_capacity(0))
