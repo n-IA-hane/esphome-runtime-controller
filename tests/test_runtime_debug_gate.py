@@ -18,10 +18,14 @@ def test_debug_trace_is_compile_gated_and_preserves_reducer(tmp_path, debug):
     (tmp_path / "esphome/core/log.h").write_text(r"""
 #pragma once
 #include <cinttypes>
+#include <cstdarg>
 #include <cstdio>
 namespace esphome::testing {
-template<typename... Ts> void log(const char *, const char *format, Ts... args) {
-  std::fprintf(stderr, format, args...);
+inline void log(const char *, const char *format, ...) {
+  std::va_list args;
+  va_start(args, format);
+  std::vfprintf(stderr, format, args);
+  va_end(args);
   std::fputc('\n', stderr);
 }
 }
@@ -55,6 +59,7 @@ int main() {
     compiled = subprocess.run(
         [
             "g++", "-std=c++17", "-O0", "-Wall", "-Wextra", "-Werror",
+            "-Wformat-security", "-Werror=format-security",
             *(["-DUSE_RUNTIME_CONTROLLER_DEBUG"] if debug else []),
             "-I" + str(tmp_path), "-I" + str(COMPONENT),
             str(COMPONENT / "runtime_controller.cpp"),
