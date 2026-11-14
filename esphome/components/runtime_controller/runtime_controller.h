@@ -179,6 +179,10 @@ class RuntimeController : public Component {
   bool set_activity_value_by_index_(int index, bool active);
   bool apply_activity_update_(const char *name, bool active);
   bool apply_activity_update_(const ActivityUpdate &update);
+  bool apply_activity_update_(const IndexedUpdate &update) {
+    return this->apply_activity_update_by_index_(update.index, update.active);
+  }
+  template<typename Update> void commit_activity_updates_(const Update *updates, size_t count);
   bool apply_activity_update_by_index_(int index, bool active);
   void commit_outputs_(const char *reason, uint32_t old_mask, const ResolvedPolicies &old_policies);
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
@@ -353,18 +357,19 @@ class RuntimeController : public Component {
     PendingEventKind kind{PendingEventKind::EVENT};
     union {
       char name[48];
-      std::array<ActivityUpdate, 16> updates;
+      std::array<IndexedUpdate, 16> updates;
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
       uint8_t voip_activity_index;
 #endif
     };
     PendingEvent() : name{} {}
     void reset_name() { new (&this->name) char[48]{}; }
-    void reset_updates() { new (&this->updates) std::array<ActivityUpdate, 16>{}; }
+    void reset_updates() { new (&this->updates) std::array<IndexedUpdate, 16>{}; }
     size_t update_count{0};
   };
 
   static_assert(std::is_trivially_copyable<PendingEvent>::value, "Pending events must retain trivial copy semantics");
+  static_assert(sizeof(PendingEvent) <= 64, "Pending input payload must retain compact fixed-capacity storage");
 
   template<typename T> struct ConfigTable {
     T *entries{nullptr};
@@ -403,6 +408,18 @@ class RuntimeController : public Component {
   void release_storage_();
 
   Storage *storage_{nullptr};
+  PendingEvent &pending_event_at_(size_t offset) {
+    return this->storage_->pending_events[(this->pending_event_head_ + offset) % this->storage_->pending_events.size()];
+  }
+  const PendingEvent &pending_event_at_(size_t offset) const {
+    return this->storage_->pending_events[(this->pending_event_head_ + offset) % this->storage_->pending_events.size()];
+  }
+  const char *&pending_action_at_(size_t offset) {
+    return this->storage_->pending_actions[(this->pending_action_head_ + offset) % this->storage_->pending_actions.size()];
+  }
+  const char *pending_action_at_(size_t offset) const {
+    return this->storage_->pending_actions[(this->pending_action_head_ + offset) % this->storage_->pending_actions.size()];
+  }
   bool storage_in_psram_{false};
   size_t event_rule_capacity_{64};
   StorageCapacities storage_capacities_{};
@@ -421,6 +438,8 @@ class RuntimeController : public Component {
 #ifdef USE_RUNTIME_CONTROLLER_LED
   size_t led_state_count_{0};
 #endif
+  uint8_t pending_action_head_{0};
+  uint8_t pending_event_head_{0};
   size_t pending_action_count_{0};
   size_t pending_event_count_{0};
   bool dispatching_{false};

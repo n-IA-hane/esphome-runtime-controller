@@ -103,7 +103,10 @@ def test_queued_templates_are_canonicalized_and_drained_in_bounded_batches() -> 
     header = (COMPONENT / "runtime_controller.h").read_text(encoding="utf-8")
 
     assert "changed |= this->apply_activity_update_(updates[i]);" in cpp
-    assert "this->storage_->activities[index].name, updates[i].active" in cpp
+    # Names have already been resolved before admission; retaining their
+    # pointers in every payload defeats the compact queue's memory contract.
+    assert "std::array<IndexedUpdate, 16> updates;" in header
+    assert "IndexedUpdate{static_cast<uint8_t>(index), updates[i].active}" in cpp
     assert "name = this->storage_->actions[action_index].name;" in cpp
     assert "size_t remaining = this->pending_action_count_;" in cpp
     assert "size_t remaining = this->pending_event_count_;" in cpp

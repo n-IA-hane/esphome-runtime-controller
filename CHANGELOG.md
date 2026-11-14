@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026.12.0-dev
+
+Changes since stable **2026.11.0**.
+
+- Store resolved activity indices instead of name pointers in the sixteen
+  queued input payloads. On the S3 and P4 toolchains, pending-event storage is
+  1,280 bytes smaller; the controller adds four bytes of queue bookkeeping.
+  Storage placement still follows the existing internal/PSRAM option.
+- Drain fixed-capacity event and action queues as circular buffers, avoiding
+  copies of the remaining queue on every removal. Preserve FIFO order,
+  deduplication, overflow handling and the initial-batch processing budget.
+
 ## 2026.11.0
 
 Changes since stable **2026.10.1**.
