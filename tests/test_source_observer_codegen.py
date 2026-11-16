@@ -142,11 +142,17 @@ runtime_controller:
     assert "apply_call.set_effect(" in cpp and "apply_call.perform();" in cpp
     assert "USE_RUNTIME_CONTROLLER_LED" not in (build / "src/esphome/core/defines.h").read_text()
     assert "USE_RUNTIME_CONTROLLER_VOICE_MEDIA" not in (build / "src/esphome/core/defines.h").read_text()
-    # Compare object relationships and configured order, not the core's old list initializer.
+    # Both core APIs retain the same observer/user action order on one owner.
     start_action = re.search(r'(\w+)->set_event\("va_start"\)', cpp).group(1)
     start_automation = re.search(r'new\((\w+)\)\s+Automation<>\(va->get_start_trigger\(\)\)', cpp).group(1)
     before_action = re.findall(r'new\((\w+)\)', cpp[:cpp.index('"user-before-delay"')])[-1]
     after_action = re.findall(r'new\((\w+)\)', cpp[:cpp.index('"user-after-delay"')])[-1]
     delay_action = re.search(r'new\((\w+)\)\s+DelayAction<>\(', cpp).group(1)
     attached = re.findall(rf'{re.escape(start_automation)}->add_action\((\w+)\)', cpp)
+    batches = re.findall(rf'{re.escape(start_automation)}->add_actions\(\{{([^}}]*)\}}\)', cpp)
+    assert not (attached and batches), "A single automation must use one assembly API"
+    if batches:
+        assert len(batches) == 1
+        attached = [action.strip() for action in batches[0].split(",")]
+        assert all(re.fullmatch(r"\w+", action) for action in attached)
     assert attached == [start_action, before_action, delay_action, after_action]
