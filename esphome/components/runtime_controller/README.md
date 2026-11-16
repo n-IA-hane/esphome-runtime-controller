@@ -556,8 +556,11 @@ schema capacity violations are rejected before compilation.
 
 Generated event rules use immutable, indexed tables. The remaining configuration
 tables are allocated once at their generated capacities, using internal memory
-by default. Both runtime queues retain all 16 entries; dispatch does not grow
-these tables. Direct C++ configurations keep the historical capacity defaults.
+by default. Both runtime queues use ESPHome's native `StaticRingBuffer` and
+retain all 16 entries without separate head/count bookkeeping. FIFO order,
+action deduplication and the initial-batch drain budget are unchanged; dispatch
+does not grow these tables. Direct C++ configurations keep the historical
+capacity defaults.
 `set_event_rule_capacity()` and `set_storage_capacities()` must precede the first
 configuration operation. A later rule-builder call materializes generated rules
 into mutable storage, preserving the C++ builder API.

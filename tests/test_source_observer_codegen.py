@@ -142,6 +142,11 @@ runtime_controller:
     assert "apply_call.set_effect(" in cpp and "apply_call.perform();" in cpp
     assert "USE_RUNTIME_CONTROLLER_LED" not in (build / "src/esphome/core/defines.h").read_text()
     assert "USE_RUNTIME_CONTROLLER_VOICE_MEDIA" not in (build / "src/esphome/core/defines.h").read_text()
-    # A single normal ActionList retains the observer, user work and delay.
+    # Compare object relationships and configured order, not the core's old list initializer.
     start_action = re.search(r'(\w+)->set_event\("va_start"\)', cpp).group(1)
-    assert re.search(r'add_actions\(\{' + start_action + r', [^}]+\}\)', cpp)
+    start_automation = re.search(r'new\((\w+)\)\s+Automation<>\(va->get_start_trigger\(\)\)', cpp).group(1)
+    before_action = re.findall(r'new\((\w+)\)', cpp[:cpp.index('"user-before-delay"')])[-1]
+    after_action = re.findall(r'new\((\w+)\)', cpp[:cpp.index('"user-after-delay"')])[-1]
+    delay_action = re.search(r'new\((\w+)\)\s+DelayAction<>\(', cpp).group(1)
+    attached = re.findall(rf'{re.escape(start_automation)}->add_action\((\w+)\)', cpp)
+    assert attached == [start_action, before_action, delay_action, after_action]

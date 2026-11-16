@@ -8,8 +8,12 @@ optional VoIP observer, then executes independent scenarios. Run it with:
 python -m pytest tests/test_runtime_controller_core_runtime.py -q
 ```
 
-The C++17 compiler and Python/pytest are the only requirements for this test.
-There is no copied controller or independent reducer implementation in the test.
+A C++17 compiler, Python/pytest and an installed ESPHome source are required.
+The session fixture extracts the unchanged `StaticRingBuffer` template from
+ESPHome's `core/helpers.h`; set `ESPHOME_SOURCE_DIR` to select another official
+source tree. Its source path and hashes are recorded beside the generated test
+header. There is no copied controller, independent reducer or substitute queue
+implementation in the test.
 The adapters under `stubs` replace ESPHome automation callbacks, plain globals,
 component scheduling, allocation, logging, LED calls, output scripts and a VoIP
 state callback. They do not emulate the firmware scheduler, SIP, audio or hardware.

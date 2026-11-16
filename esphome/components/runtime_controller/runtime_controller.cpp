@@ -55,7 +55,7 @@ void RuntimeController::set_storage_in_psram(bool storage_in_psram) {
 #ifdef USE_RUNTIME_CONTROLLER_LED
         this->led_state_count_ == 0 &&
 #endif
-        this->pending_action_count_ == 0 && this->pending_event_count_ == 0;
+        this->storage_->pending_actions.empty() && this->storage_->pending_events.empty();
     if (!storage_is_empty) {
       ESP_LOGE(TAG, "Cannot change runtime storage placement after configuration has started");
       this->mark_config_error_();
@@ -283,7 +283,7 @@ void RuntimeController::setup() {
     this->apply_generic_outputs_();
     this->commit_outputs_("setup", old_mask, old_policies);
   }
-  if (this->pending_action_count_ == 0 && this->pending_event_count_ == 0)
+  if (this->storage_->pending_actions.empty() && this->storage_->pending_events.empty())
     this->disable_loop();
 }
 
@@ -294,10 +294,10 @@ void RuntimeController::loop() {
   this->drain_pending_events_();
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
   // Do not let reconciliation overtake captured observations in the queue.
-  if (this->pending_event_count_ == 0)
+  if (this->storage_->pending_events.empty())
     this->on_voip_event();
 #endif
-  if (this->pending_action_count_ == 0 && this->pending_event_count_ == 0)
+  if (this->storage_->pending_actions.empty() && this->storage_->pending_events.empty())
     this->disable_loop();
 }
 
@@ -337,7 +337,7 @@ void RuntimeController::mark_config_error_() { this->config_error_ = true; }
 void RuntimeController::observe_event(const char *name) {
   if (!this->allocate_storage_())
     return;
-  if (this->pending_event_count_ == this->storage_->pending_events.size() && !this->dispatching_)
+  if (this->storage_->pending_events.size() == 16 && !this->dispatching_)
     this->drain_pending_events_();
   (void) this->enqueue_event_(name);
 }
@@ -345,7 +345,7 @@ void RuntimeController::observe_event(const char *name) {
 void RuntimeController::observe_activity(const char *name, bool active) {
   if (!this->allocate_storage_())
     return;
-  if (this->pending_event_count_ == this->storage_->pending_events.size() && !this->dispatching_)
+  if (this->storage_->pending_events.size() == 16 && !this->dispatching_)
     this->drain_pending_events_();
   (void) this->enqueue_activity_update_(name, active);
 }
@@ -655,7 +655,7 @@ void RuntimeController::on_voip_event() {
   // Capture each callback's state now. Re-reading the live phone when draining
   // would collapse a queued ringing -> idle pair into two idle observations.
   const uint8_t index = this->capture_voip_activity_();
-  if (this->dispatching_ || (this->pending_event_count_ > 0 && !this->draining_pending_events_)) {
+  if (this->dispatching_ || (!this->storage_->pending_events.empty() && !this->draining_pending_events_)) {
     (void) this->enqueue_voip_activity_(index);
     if (!this->dispatching_)
       this->drain_pending_events_();
@@ -682,7 +682,7 @@ void RuntimeController::process_voip_activity_(uint8_t index) {
 void RuntimeController::event(const char *name) {
   if (this->storage_ == nullptr || this->config_error_ || name == nullptr || name[0] == '\0')
     return;
-  if (this->dispatching_ || (this->pending_event_count_ > 0 && !this->draining_pending_events_)) {
+  if (this->dispatching_ || (!this->storage_->pending_events.empty() && !this->draining_pending_events_)) {
     (void) this->enqueue_event_(name);
     if (!this->dispatching_)
       this->drain_pending_events_();
@@ -752,7 +752,7 @@ void RuntimeController::event(const char *name) {
 void RuntimeController::set_activity(const char *name, bool active) {
   if (this->storage_ == nullptr || this->config_error_)
     return;
-  if (this->dispatching_ || (this->pending_event_count_ > 0 && !this->draining_pending_events_)) {
+  if (this->dispatching_ || (!this->storage_->pending_events.empty() && !this->draining_pending_events_)) {
     (void) this->enqueue_activity_update_(name, active);
     if (!this->dispatching_)
       this->drain_pending_events_();
@@ -789,7 +789,7 @@ void RuntimeController::commit_activity_updates_(const Update *updates, size_t c
 void RuntimeController::set_activities(const ActivityUpdate *updates, size_t count) {
   if (this->storage_ == nullptr || this->config_error_ || updates == nullptr || count == 0)
     return;
-  if (this->dispatching_ || (this->pending_event_count_ > 0 && !this->draining_pending_events_)) {
+  if (this->dispatching_ || (!this->storage_->pending_events.empty() && !this->draining_pending_events_)) {
     (void) this->enqueue_activity_updates_(updates, count);
     if (!this->dispatching_)
       this->drain_pending_events_();
@@ -1277,11 +1277,7 @@ int RuntimeController::find_event_trigger_(const char *name) const {
 bool RuntimeController::enqueue_event_(const char *name) {
   if (name == nullptr || name[0] == '\0')
     return false;
-  if (this->pending_event_count_ >= this->storage_->pending_events.size()) {
-    ESP_LOGE(TAG, "Cannot queue event '%s': queue full", name);
-    return false;
-  }
-  auto &event = this->pending_event_at_(this->pending_event_count_);
+  PendingEvent event;
   event.reset_name();
   event.update_count = 0;
   event.kind = PendingEventKind::EVENT;
@@ -1291,7 +1287,10 @@ bool RuntimeController::enqueue_event_(const char *name) {
     event.name[0] = '\0';
     return false;
   }
-  this->pending_event_count_++;
+  if (!this->storage_->pending_events.push(event)) {
+    ESP_LOGE(TAG, "Cannot queue event '%s': queue full", name);
+    return false;
+  }
 #ifdef USE_RUNTIME_CONTROLLER_DEBUG
   if (this->debug_)
     ESP_LOGI(TAG, "EVENT_QUEUE seq=%" PRIu32 " name=%s", this->sequence_, event.name);
@@ -1308,11 +1307,7 @@ bool RuntimeController::enqueue_activity_update_(const char *name, bool active) 
 bool RuntimeController::enqueue_activity_updates_(const ActivityUpdate *updates, size_t count) {
   if (updates == nullptr || count == 0)
     return false;
-  if (this->pending_event_count_ >= this->storage_->pending_events.size()) {
-    ESP_LOGE(TAG, "Cannot queue activity update: queue full");
-    return false;
-  }
-  auto &event = this->pending_event_at_(this->pending_event_count_++);
+  PendingEvent event;
   event.reset_updates();
   event.update_count = 0;
   event.kind = PendingEventKind::SET_ACTIVITIES;
@@ -1333,7 +1328,10 @@ bool RuntimeController::enqueue_activity_updates_(const ActivityUpdate *updates,
     event.updates[event.update_count++] = IndexedUpdate{static_cast<uint8_t>(index), updates[i].active};
   }
   if (event.update_count == 0) {
-    this->pending_event_count_--;
+    return false;
+  }
+  if (!this->storage_->pending_events.push(event)) {
+    ESP_LOGE(TAG, "Cannot queue activity update: queue full");
     return false;
   }
 #ifdef USE_RUNTIME_CONTROLLER_DEBUG
@@ -1346,17 +1344,16 @@ bool RuntimeController::enqueue_activity_updates_(const ActivityUpdate *updates,
 
 #ifdef USE_RUNTIME_CONTROLLER_VOIP
 bool RuntimeController::enqueue_voip_activity_(uint8_t index) {
-  if (this->pending_event_count_ >= this->storage_->pending_events.size()) {
-    ESP_LOGE(TAG, "Cannot queue VoIP observation: queue full");
-    // Keep the loop awake so the normal observer can reconcile the latest
-    // phone state after draining. Intermediate overflowing transitions are lost.
-    this->enable_loop_soon_any_context();
-    return false;
-  }
-  auto &event = this->pending_event_at_(this->pending_event_count_++);
+  PendingEvent event;
   event.kind = PendingEventKind::VOIP_ACTIVITY;
   event.update_count = 0;
   event.voip_activity_index = index;
+  if (!this->storage_->pending_events.push(event)) {
+    ESP_LOGE(TAG, "Cannot queue VoIP observation: queue full");
+    // Reconcile the latest phone state after draining; intermediate transitions are lost.
+    this->enable_loop_soon_any_context();
+    return false;
+  }
   this->enable_loop_soon_any_context();
   return true;
 }
@@ -1370,15 +1367,10 @@ void RuntimeController::drain_pending_events_() {
   // Process only the batch present on entry. Events emitted by that batch stay
   // queued for the next main-loop turn, preventing recursive or cyclic rules
   // from monopolising the scheduler.
-  size_t remaining = this->pending_event_count_;
-  while (!this->dispatching_ && this->pending_event_count_ > 0 && remaining-- > 0) {
-    PendingEvent event = this->pending_event_at_(0);
-    auto &last = this->pending_event_at_(0);
-    this->pending_event_head_ = (this->pending_event_head_ + 1) % this->storage_->pending_events.size();
-    --this->pending_event_count_;
-    last.kind = PendingEventKind::EVENT;
-    last.reset_name();
-    last.update_count = 0;
+  size_t remaining = this->storage_->pending_events.size();
+  while (!this->dispatching_ && !this->storage_->pending_events.empty() && remaining-- > 0) {
+    PendingEvent event = this->storage_->pending_events.front();
+    this->storage_->pending_events.pop();
 
     if (event.kind == PendingEventKind::EVENT) {
       this->event(event.name);
@@ -1414,8 +1406,8 @@ void RuntimeController::run_named_action_(const char *name, const char *source_e
     // keeps its normal meaning, including when it replaces a queued rejection.
     bool explicit_pending = false;
     if (this->announcement_stop_.reason == AnnouncementStopReason::NONE) {
-      for (size_t i = 0; i < this->pending_action_count_; ++i)
-        explicit_pending |= str_eq(this->pending_action_at_(i), name);
+      for (const char *pending : this->storage_->pending_actions)
+        explicit_pending |= str_eq(pending, name);
     }
     if (!explicit_pending) {
       this->announcement_stop_ = AnnouncementStopContext{};
@@ -1429,8 +1421,8 @@ void RuntimeController::run_named_action_(const char *name, const char *source_e
     }
   }
 #endif
-  for (size_t i = 0; i < this->pending_action_count_; i++) {
-    if (str_eq(this->pending_action_at_(i), name)) {
+  for (const char *pending : this->storage_->pending_actions) {
+    if (str_eq(pending, name)) {
 #ifdef USE_RUNTIME_CONTROLLER_DEBUG
       if (this->debug_)
         ESP_LOGI(TAG, "ACTION_SKIP_DUP seq=%" PRIu32 " name=%s", this->sequence_, name);
@@ -1438,7 +1430,7 @@ void RuntimeController::run_named_action_(const char *name, const char *source_e
       return;
     }
   }
-  if (this->pending_action_count_ >= this->storage_->pending_actions.size()) {
+  if (!this->storage_->pending_actions.push(name)) {
     ESP_LOGE(TAG, "Cannot queue action '%s': queue full", name);
     return;
   }
@@ -1446,7 +1438,6 @@ void RuntimeController::run_named_action_(const char *name, const char *source_e
   if (this->debug_)
     ESP_LOGI(TAG, "ACTION_QUEUE seq=%" PRIu32 " name=%s", this->sequence_, name);
 #endif
-  this->pending_action_at_(this->pending_action_count_++) = name;
   this->enable_loop_soon_any_context();
 }
 
@@ -1523,8 +1514,7 @@ bool RuntimeController::announcement_stop_is_current_() const {
   // Source automations intentionally defer reduction until their synchronous
   // user actions finish. Inspect only observations that supersede this stop;
   // do not reorder the two queues or execute unrelated events early.
-  for (size_t i = 0; i < this->pending_event_count_; ++i) {
-    const auto &pending = this->pending_event_at_(i);
+  for (const auto &pending : this->storage_->pending_events) {
     if (pending.kind != PendingEventKind::EVENT)
       continue;
     const char *event = pending.name;
@@ -1542,12 +1532,10 @@ bool RuntimeController::announcement_stop_is_current_() const {
 void RuntimeController::drain_pending_actions_() {
   // Newly queued actions run on the next loop turn. This preserves FIFO order
   // while ensuring self-referential automations cannot spin forever here.
-  size_t remaining = this->pending_action_count_;
-  while (this->pending_action_count_ > 0 && remaining-- > 0) {
-    const char *name = this->pending_action_at_(0);
-    this->pending_action_at_(0) = nullptr;
-    this->pending_action_head_ = (this->pending_action_head_ + 1) % this->storage_->pending_actions.size();
-    --this->pending_action_count_;
+  size_t remaining = this->storage_->pending_actions.size();
+  while (!this->storage_->pending_actions.empty() && remaining-- > 0) {
+    const char *name = this->storage_->pending_actions.front();
+    this->storage_->pending_actions.pop();
     this->execute_named_action_(name);
   }
 }

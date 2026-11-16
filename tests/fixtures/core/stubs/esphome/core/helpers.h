@@ -1,6 +1,7 @@
 #pragma once
 #include <new>
 #include <cstdint>
+#include "runtime_native_static_ring_buffer.h"
 namespace esphome {
 namespace testing {
 inline bool fail_allocations = false;

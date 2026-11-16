@@ -108,8 +108,6 @@ def test_queued_templates_are_canonicalized_and_drained_in_bounded_batches() -> 
     assert "std::array<IndexedUpdate, 16> updates;" in header
     assert "IndexedUpdate{static_cast<uint8_t>(index), updates[i].active}" in cpp
     assert "name = this->storage_->actions[action_index].name;" in cpp
-    assert "size_t remaining = this->pending_action_count_;" in cpp
-    assert "size_t remaining = this->pending_event_count_;" in cpp
     assert "bool draining_pending_events_{false};" in header
     assert (
         "this->drain_pending_events_();"
@@ -132,7 +130,6 @@ def test_runtime_storage_has_an_explicit_psram_gate() -> None:
     assert "EventRuleStorage event_rules{};" in header
     assert "rule_allocator.allocate(this->event_rule_capacity_)" in cpp
     assert "var.set_event_rule_capacity(0)" in init
-    assert "std::array<PendingEvent, 16> pending_events{};" in header
 
 
 def test_schema_rejects_names_that_cannot_fit_runtime_buffers() -> None:

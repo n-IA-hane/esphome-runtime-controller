@@ -136,8 +136,9 @@ Configuration limits are 32 activities, 16 derived activities, 8 policy channels
 reentrant event/update batches. Rules allow 8 conditions per
 ``any``/``all``/``none`` list and 16 updates. Generated event rules are immutable
 indexed tables; mutable configuration tables are allocated once at their emitted
-sizes. Runtime queue capacities remain fixed. Direct C++ builders retain the
-full documented defaults. Dispatch does not grow the tables. Templatable ESPHome
+sizes. Both runtime queues use ESPHome's native ``StaticRingBuffer``, retaining
+all 16 entries without separate head/count bookkeeping. Direct C++ builders
+retain the full documented defaults. Dispatch does not grow the tables. Templatable ESPHome
 string actions can still create temporary strings.
 
 Events raised while dispatch is active are queued after the current commit. A

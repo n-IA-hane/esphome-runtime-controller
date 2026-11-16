@@ -21,6 +21,14 @@ Stable release: [2026.11.0](https://github.com/n-IA-hane/esphome-runtime-control
 Requires ESPHome **2026.10.0 or newer**. See the
 [changes since 2026.10.1](CHANGELOG.md) and [migration guide](MIGRATION.md).
 
+Development pending queues use the official ESPHome `StaticRingBuffer`, with
+sixteen entries for input events/update batches and sixteen for named actions.
+FIFO order, action deduplication and bounded draining are unchanged; work
+created by a drain waits for a later main-loop turn. This stabilization was
+host-tested against official core commit
+`373224c141dceadbb67ace263040cbfc802c5968` (`2026.12.0.dev0`), separately from
+board and media qualification.
+
 Native observers use the official ESPHome media player, Voice Assistant,
 Micro Wake Word and API automation interfaces. Replacement providers for those
 components are not required. The observed components keep ownership of their

@@ -399,8 +399,8 @@ class RuntimeController : public Component {
 #ifdef USE_RUNTIME_CONTROLLER_LED
     ConfigTable<LedState> led_states{};
 #endif
-    std::array<const char *, 16> pending_actions{};
-    std::array<PendingEvent, 16> pending_events{};
+    StaticRingBuffer<const char *, 16> pending_actions{};
+    StaticRingBuffer<PendingEvent, 16> pending_events{};
   };
 
   size_t configuration_storage_bytes_() const;
@@ -408,18 +408,6 @@ class RuntimeController : public Component {
   void release_storage_();
 
   Storage *storage_{nullptr};
-  PendingEvent &pending_event_at_(size_t offset) {
-    return this->storage_->pending_events[(this->pending_event_head_ + offset) % this->storage_->pending_events.size()];
-  }
-  const PendingEvent &pending_event_at_(size_t offset) const {
-    return this->storage_->pending_events[(this->pending_event_head_ + offset) % this->storage_->pending_events.size()];
-  }
-  const char *&pending_action_at_(size_t offset) {
-    return this->storage_->pending_actions[(this->pending_action_head_ + offset) % this->storage_->pending_actions.size()];
-  }
-  const char *pending_action_at_(size_t offset) const {
-    return this->storage_->pending_actions[(this->pending_action_head_ + offset) % this->storage_->pending_actions.size()];
-  }
   bool storage_in_psram_{false};
   size_t event_rule_capacity_{64};
   StorageCapacities storage_capacities_{};
@@ -438,10 +426,6 @@ class RuntimeController : public Component {
 #ifdef USE_RUNTIME_CONTROLLER_LED
   size_t led_state_count_{0};
 #endif
-  uint8_t pending_action_head_{0};
-  uint8_t pending_event_head_{0};
-  size_t pending_action_count_{0};
-  size_t pending_event_count_{0};
   bool dispatching_{false};
   bool draining_pending_events_{false};
   uint32_t generic_activity_mask_{0};

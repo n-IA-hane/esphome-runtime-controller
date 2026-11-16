@@ -2,15 +2,22 @@
 
 ## 2026.12.0-dev
 
+- Add the immutable coordinated Core 373 to host CI while retaining the
+  independent Core 10 compatibility check.
 Changes since stable **2026.11.0**.
 
 - Store resolved activity indices instead of name pointers in the sixteen
   queued input payloads. On the S3 and P4 toolchains, pending-event storage is
-  1,280 bytes smaller; the controller adds four bytes of queue bookkeeping.
-  Storage placement still follows the existing internal/PSRAM option.
-- Drain fixed-capacity event and action queues as circular buffers, avoiding
-  copies of the remaining queue on every removal. Preserve FIFO order,
-  deduplication, overflow handling and the initial-batch processing budget.
+  1,280 bytes smaller. Storage placement still follows the existing internal/PSRAM option.
+- Use ESPHome's `StaticRingBuffer<T, 16>` for both pending queues instead of
+  maintaining separate head/count fields and indexed accessors. Preserve all
+  sixteen slots, FIFO order, action deduplication, overflow handling and the
+  initial-batch processing budget. New work raised while draining stays pending
+  for a later main-loop turn.
+- Host regressions use the unchanged container template from the selected
+  official ESPHome source, rather than a second queue implementation. This
+  checkpoint verifies controller behavior and code generation, not device
+  scheduling, media performance or firmware promotion.
 
 ## 2026.11.0
 
